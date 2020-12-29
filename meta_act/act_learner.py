@@ -1,19 +1,21 @@
-from scipy.stats import entropy
 import math
+
+from scipy.stats import entropy
 
 
 class ActiveLearner:
     def __init__(
-        self, z_val, stream, grace_period, model, budget=None, budget_window=None, verbose=True, verbose_prefix=""
+            self, z_val, stream, model, budget=None, budget_window=None,
+            grace_period=None
     ):
         self.z_val = z_val
         self.model = model
-        self.grace_period = grace_period
+        self.grace_period = (getattr(model, "grace_period", 200) if
+                             grace_period is None else grace_period)
         self.stream = stream
         self.budget = budget
-        self.verbose = verbose
-        self.verbose_prefix = verbose_prefix
-        self.budget_window = budget_window if budget_window is not None else 1000
+        self.budget_window = (budget_window if budget_window is not None
+                              else 1000)
         self.budget_counter = 0
         self.accuracy = 0
         self.hits = 0
@@ -21,7 +23,7 @@ class ActiveLearner:
         self.queries = 0
         self.samples_seen = 0
 
-        X, y = self.stream.next_sample(grace_period)
+        X, y = self.stream.next_sample(self.grace_period)
         self._prequential_eval(X, y)
 
     def _prequential_eval(self, X, y, query=True):
@@ -48,18 +50,10 @@ class ActiveLearner:
             probs = self.model.predict_proba(X)
             entropy_val = entropy(probs[0], base=2)
 
-            if self.verbose:
-                print(
-                    f"{self.verbose_prefix}"
-                    f"Sample {self.samples_seen} - "
-                    f"Queries: {self.queries} / Acc: {self.accuracy}",
-                    end="",
-                )
-
             if self.budget is not None:
                 if (
-                    self.budget_counter <= self.budget
-                    and self.budget_counter < self.budget_window
+                        self.budget_counter <= self.budget
+                        and self.budget_counter < self.budget_window
                 ):
                     query = False
                     self.budget_counter += 1
@@ -68,15 +62,15 @@ class ActiveLearner:
                     self.budget_counter = 0
                 else:
                     query = (
-                        entropy_val >= self.z_val
-                        or entropy_val == 0
-                        or math.isnan(entropy_val)
+                            entropy_val >= self.z_val
+                            or entropy_val == 0
+                            or math.isnan(entropy_val)
                     )
             else:
                 query = (
-                    entropy_val >= self.z_val
-                    or entropy_val == 0
-                    or math.isnan(entropy_val)
+                        entropy_val >= self.z_val
+                        or entropy_val == 0
+                        or math.isnan(entropy_val)
                 )
 
             self._prequential_eval(X, y, query)

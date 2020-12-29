@@ -1,4 +1,16 @@
+import logging
+
 from skmultiflow.drift_detection import ADWIN
+
+from meta_act.learner import get_error_hoeffdingtree
+
+
+def get_windows(data, pre_train_size, delta, hf_kwargs):
+    eval_data = get_error_hoeffdingtree(data, pre_train_size,
+                                        **hf_kwargs)
+    windows = adwin_windows(eval_data, delta, index_start=pre_train_size)
+    logging.info(f"{len(windows)} adwin windows found")
+    return windows
 
 
 def adwin_windows(data, delta, index_start=0):
@@ -10,15 +22,4 @@ def adwin_windows(data, delta, index_start=0):
         if adwin.detected_change():
             windows.append((last_i, i + index_start))
             last_i = i + index_start
-    return windows
-
-
-def fixed_windows(data, windows_n=None, windows_size=None):
-    if windows_n is None and windows_size is None:
-        raise ValueError("Either number of windows or size must be set")
-
-    if windows_n is not None:
-        windows_size = len(data) // windows_n
-    windows = [(i, i + windows_size) for i in range(0, len(data), windows_size)]
-
     return windows

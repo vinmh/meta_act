@@ -1,9 +1,9 @@
+from skmultiflow.data import DataStream
 from skmultiflow.trees import HoeffdingTreeClassifier
-from skmultiflow.data import FileStream
 
 
-def get_error_hoeffdingtree(data_path, pre_train_size, **hf_kwargs):
-    stream = FileStream(data_path)
+def get_error_hoeffdingtree(data, pre_train_size, **hf_kwargs):
+    stream = DataStream(data)
     hf = HoeffdingTreeClassifier(**hf_kwargs)
 
     pretrainX, pretrainy = stream.next_sample(pre_train_size)
