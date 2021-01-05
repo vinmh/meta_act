@@ -7,13 +7,12 @@ from typing import Union, Generator, List
 import numpy as np
 import pandas as pd
 import tsfel
-from pymfe.mfe import MFE
 from skmultiflow.data import DataStream
 from skmultiflow.trees import HoeffdingTreeClassifier
 
 from meta_act.act_learner import ActiveLearner
-from meta_act.tsfel_ext import gen_tsfel_features
 from meta_act.util import dict_str_creator
+from meta_act.windows import get_window_features
 from meta_act.windows import get_windows
 
 
@@ -58,8 +57,7 @@ def create_metadb(stream_files: Union[Generator, List[str]], z_vals_n: int,
     pre_train_sample_amount += z_val_hf_kwargs.get("grace_period", 200)
 
     if mfe_features is None:
-        mfe_features = ["nr_class", "attr_ent", "class_ent", "kurtosis",
-                        "skewness"]
+        mfe_features = ["nr_class", "attr_ent", "kurtosis", "skewness"]
         log_txt = f"(Default): {', '.join(mfe_features)}"
     else:
         log_txt = f": {', '.join(mfe_features)}"
@@ -158,24 +156,9 @@ def create_metadb(stream_files: Union[Generator, List[str]], z_vals_n: int,
                 )
 
                 # MetaDB features
-                # MFE Features
-                mfe = MFE(features=mfe_features,
-                          summary=features_summaries)
-                mfe.fit(
-                    stream_npX, stream_npY
-                )
-                feats = mfe.extract()
-                stream_feats = pd.DataFrame(
-                    {name: [value] for name, value in
-                     zip(feats[0], feats[1])}
-                )
-
-                # TSFEL Features
-                feats_tsfel = gen_tsfel_features(tsfel_config,
-                                                 pd.DataFrame(stream_npX),
-                                                 summary=features_summaries)
-                stream_feats = pd.concat([stream_feats, feats_tsfel],
-                                         axis=1)
+                stream_feats = get_window_features(stream_npX, stream_npY,
+                                                   mfe_features, tsfel_config,
+                                                   features_summaries)
 
                 stream_feats["dataset_name"] = stream_file_name
                 stream_feats["window_method"] = "adwin"

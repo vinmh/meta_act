@@ -9,8 +9,6 @@ Right now only stream-based active learning is supported.
 ## To-Do
 
 - Tests
-- Metalearner
-- Metarecommender exporter
 
 ## Usage
 
@@ -43,9 +41,10 @@ There is also an alternate generator that, instead of saving dataset files, it r
 returns in memory datasets created from alternating generators with randomized hyperparameters. For example:
 
 ```
-def dataset_generator([("HyperplaneGenerator", {"n_features": [5, 10, 15]}),
-                       ("LEDGeneratorDrift", {"noise_percentage": [0.0, 0.1, 0.5]}],
-                      max_samples=100000)
+meta_act.ds_gen.dataset_generator([("HyperplaneGenerator",
+                                   {"n_features": [5, 10, 15]}),
+                                   ("LEDGeneratorDrift", {"noise_percentage": [0.0, 0.1, 0.5]}],
+                                   max_samples=100000)
 ```
 
 This will generate infinite datasets by alternating between the _HyperplaneGenerator_
@@ -57,13 +56,13 @@ as possible. For numeric hyperparameters, the possible values can be easily set 
 The actual metadatabase can be generated with the following function:
 
 ```
-def create_metadb(stream_files,
-                  z_vals_n=5,
-                  z_val_selection_margin=0.02,
-                  window_pre_train_sample_n=300,
-                  window_adwin_delta=0.0001,
-                  stop_conditions={"minority_target": 100},
-                  max_failures=100)
+meta_act.metadb_craft.create_metadb(stream_files,
+                                    z_vals_n=5,
+                                    z_val_selection_margin=0.02,
+                                    window_pre_train_sample_n=300,
+                                    window_adwin_delta=0.0001,
+                                    stop_conditions={"minority_target": 100},
+                                    max_failures=100)
 ```
 
 There are more arguments that can be passed, check the code for specifications. If _stream_files_ is sent as a list of
@@ -91,3 +90,33 @@ save as a csv file in the specified path.
 The parameter _max_failures_ must be set to a reasonable large number preferably, it will determine the amount of
 datasets that can fail before aborting the metadatabase generation, specially important when using an infinite generator
 since in case of errors, stop conditions may never be achieved.
+
+### Online Window Extraction and MetaLearning
+
+Window features may be extracted from a stream window with the function:
+
+```
+meta_act.windows.get_window_features(X, mfe_features, tsfel_config, summary_funcs)
+```
+
+This will return a single line of features to be used with the metalearner, X is expected to be a numpy array.
+
+With this, its possible to use the MetaLearner class from
+`meta_act.metalearn.MetaLearner(learner, *learner_args, **learner_kwargs)`. If the learner parameter is set to a string,
+it will assume an already trained model is being attempted to be loaded, `joblib` is required, in this case the
+parameters `learner_args` and `learner_kwargs` are simply ignored. Otherwise the learner parameter is treated as a
+sklearn algorithm class and will attempt to initialize it with the args and kwargs sent.
+
+`meta_act.metalearn.MetaLearner.fit(X, y, oversample=True, test_data=None)`
+can be called to train the model, if oversample is set to `True`, it will attempt to oversample the training dataset
+with _SMOTE_. If the parameter `test_data` is set to a tuple, it is assumed it is composed of a two element tuple, the
+first being a test X array and the second being a test y array, and the results will include test metrics (R^2 on test
+data, MSE and MAE).
+
+After the model is trained, it can be used to predict z values on a number of samples
+with `meta_act.metalearn.MetaLearner.predict(X)`, recover metrics from test data
+with `meta_act.metalearn.MetaLearner.test(X, y)`
+and be saved on a file with `meta_act.metalearn.MetaLearner.save_model(filepath)`. Saving the model two files are
+created, a metadata file containing various data about the training environment and the serialized model file to be
+loaded like before. The metadata file is only loaded if it is present in the same directory as the serialized model
+file.

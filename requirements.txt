@@ -5,4 +5,5 @@ tsfel==0.1.*
 pymfe==0.*
 pandas==1.1.2
 numpy==1.19.2
+imbalanced-learn==0.7.0
 pytest
