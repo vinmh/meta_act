@@ -113,7 +113,7 @@ def create_metadb(stream_files: Union[Generator, List[str]], z_vals_n: int,
     for stream_file in stream_files:
         stream_file_name = "<Error in getting stream name>"
         try:
-            if stream_from_generator:
+            if not stream_from_generator:
                 full_stream_file = np.genfromtxt(stream_file, delimiter=",")[1:]
                 stream_file_name = stream_file
             else:
@@ -124,7 +124,7 @@ def create_metadb(stream_files: Union[Generator, List[str]], z_vals_n: int,
             n_classes = np.unique(full_stream_fileY).shape[0]
             z_vals = generate_zvals(n_classes, z_vals_n)
             logging.info(f"{n_classes} classes found in {stream_file_name},"
-                         f"z_vals= {', '.join(z_vals)}")
+                         f"z_vals= {', '.join([str(z) for z in z_vals])}")
             windows = get_windows(full_stream_file, window_pre_train_sample_n,
                                   window_adwin_delta, window_hf_kwargs)
             window_grace_period = window_hf_kwargs.get("grace_period", 200)
@@ -156,8 +156,9 @@ def create_metadb(stream_files: Union[Generator, List[str]], z_vals_n: int,
                 )
 
                 # MetaDB features
-                stream_feats = get_window_features(stream_npX, stream_npY,
-                                                   mfe_features, tsfel_config,
+                stream_feats = get_window_features(stream_npX,
+                                                   mfe_features,
+                                                   tsfel_config,
                                                    features_summaries)
 
                 stream_feats["dataset_name"] = stream_file_name
@@ -173,9 +174,9 @@ def create_metadb(stream_files: Union[Generator, List[str]], z_vals_n: int,
                 if metadb is None:
                     metadb = stream_feats
                 else:
-                    metadb = pd.concat(metadb, stream_feats).reset_index(
+                    metadb = pd.concat([metadb, stream_feats]).reset_index(
                         drop=True)
-                stream_files_used += 1
+            stream_files_used += 1
         except Exception as e:
             logging.error(f"{stream_file_name} failed, reason: {e}")
             traceback.print_exc()
@@ -185,7 +186,7 @@ def create_metadb(stream_files: Union[Generator, List[str]], z_vals_n: int,
         finally:
             stop_running = False
             if metadb is not None:
-                for k, v in stop_conditions.values():
+                for k, v in stop_conditions.items():
                     if k == "max_datasets":
                         if stream_files_used > v:
                             stop_running = True
@@ -209,10 +210,10 @@ def create_metadb(stream_files: Union[Generator, List[str]], z_vals_n: int,
                 if stop_running:
                     break
 
-        if output_path is None:
-            return metadb
-        else:
-            return True
+    if output_path is None:
+        return metadb
+    else:
+        return True
 
 
 def generate_zvals(classes, n_vals, log_func=None):

@@ -3,7 +3,9 @@ from skmultiflow.trees import HoeffdingTreeClassifier
 
 
 def get_error_hoeffdingtree(data, pre_train_size, **hf_kwargs):
-    stream = DataStream(data)
+    orig_X = data[:, :-1]
+    orig_y = data[:, -1].astype(int)
+    stream = DataStream(orig_X, orig_y)
     hf = HoeffdingTreeClassifier(**hf_kwargs)
 
     pretrainX, pretrainy = stream.next_sample(pre_train_size)

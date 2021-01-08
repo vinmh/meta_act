@@ -1,5 +1,7 @@
 # MetaRecommender for Entropy Threshold based Active Learning
 
+![Coverage](./coverage.svg)
+
 ## Introduction
 
 This library aims to provide utilities for use in meta-recommending entropy thresholds (z values) for Active Learning.

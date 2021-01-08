@@ -40,14 +40,14 @@ def generate_datasets(generator_name: str, outpath: str, max_samples=100000,
         X = np.concatenate(X)
         y = np.concatenate(y)
 
-        df = pd.DataFrame(np.hstack((X, np.array([y]).T)))
+        df = pd.DataFrame(np.hstack((X, np.array([y], dtype=int).T)))
 
         filename = (f"{file_prefix}_"
                     f"{'_'.join([f'{k}V{v}' for k, v in combination.items()])}"
                     f".csv")
         outfile = Path(outpath) / filename
 
-        print(f"Writing {filename} dataset...")
+        logging.info(f"Writing {filename} dataset...")
         df.to_csv(outfile, index=False)
 
 
@@ -66,7 +66,7 @@ def dataset_generator(generators: List[Tuple[str, Dict[str, List[Any]]]],
         genclass = gen_classes[selected_gen_n]
         genmetadata = generators[selected_gen_n]
 
-        hyperparams = {k: random.choice(v) for k, v in genmetadata[1]}
+        hyperparams = {k: random.choice(v) for k, v in genmetadata[1].items()}
         logging.info(f"{gen_n}: Generating dataset from {genmetadata[0]}")
         logging.debug(f"Hyperparameters: {dict_str_creator(hyperparams)}")
 
@@ -83,6 +83,6 @@ def dataset_generator(generators: List[Tuple[str, Dict[str, List[Any]]]],
 
         file_prefix = genmetadata[0].replace("Generator", "")
         filename = (f"{file_prefix}_"
-                    f"{'_'.join([f'{k}V{v}' for k, v in hyperparams])}")
+                    f"{'_'.join([f'{k}V{v}' for k, v in hyperparams.items()])}")
 
-        yield np.hstack((X, np.array([y]).T)), filename
+        yield np.hstack((X, np.array([y], dtype=int).T)), filename

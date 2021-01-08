@@ -7,3 +7,5 @@ pandas==1.1.2
 numpy==1.19.2
 imbalanced-learn==0.7.0
 pytest
+coverage-badge
+wheel
