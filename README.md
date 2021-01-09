@@ -8,9 +8,10 @@ This library aims to provide utilities for use in meta-recommending entropy thre
 
 Right now only stream-based active learning is supported.
 
-## To-Do
+## Installation
 
-- Tests
+On *nix systems `make install` should suffice as long as Python 3.7 is installed. On windows some makefile interpreter
+is required such as Cygwin.
 
 ## Usage
 
@@ -109,11 +110,12 @@ it will assume an already trained model is being attempted to be loaded, `joblib
 parameters `learner_args` and `learner_kwargs` are simply ignored. Otherwise the learner parameter is treated as a
 sklearn algorithm class and will attempt to initialize it with the args and kwargs sent.
 
-`meta_act.metalearn.MetaLearner.fit(X, y, oversample=True, test_data=None)`
+`meta_act.metalearn.MetaLearner.fit(X, y, oversample=True, scale=True, test_data=None)`
 can be called to train the model, if oversample is set to `True`, it will attempt to oversample the training dataset
-with _SMOTE_. If the parameter `test_data` is set to a tuple, it is assumed it is composed of a two element tuple, the
-first being a test X array and the second being a test y array, and the results will include test metrics (R^2 on test
-data, MSE and MAE).
+with _SMOTE_. If the parameter scale is set to true, the X data is scaled with scikit-learn's StandardScaler. If the
+parameter `test_data` is set to a tuple, it is assumed it is composed of a two element tuple, the first being a test X
+array and the second being a test y array, and the results will include test metrics
+(R^2 on test data, MSE and MAE).
 
 After the model is trained, it can be used to predict z values on a number of samples
 with `meta_act.metalearn.MetaLearner.predict(X)`, recover metrics from test data

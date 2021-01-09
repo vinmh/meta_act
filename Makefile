@@ -9,7 +9,7 @@ build: test
 	python setup.py bdist_wheel
 
 test: activate_venv
-	coverage run -m pytest test
+	coverage run --omit 'venv/*' -m pytest test
 	coverage-badge -fo coverage.svg
 
 clean:

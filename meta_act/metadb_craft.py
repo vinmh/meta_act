@@ -213,6 +213,7 @@ def create_metadb(stream_files: Union[Generator, List[str]], z_vals_n: int,
     if output_path is None:
         return metadb
     else:
+        metadb.to_csv(output_path, index=False)
         return True
 
 

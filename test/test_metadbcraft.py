@@ -21,6 +21,24 @@ def test_createmetadb_onthefly():
     assert isinstance(metadb, pd.DataFrame)
 
 
+def test_createmetadb_savefile():
+    gen = dataset_generator([("HyperplaneGenerator",
+                              {"n_features": [5, 10, 15]}),
+                             ("LEDGeneratorDrift",
+                              {"noise_percentage": [0.0, 0.1, 0.5],
+                               "has_noise": [False, True],
+                               "n_drift_features": [1, 3, 5]})],
+                            max_samples=10000)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        outpath = f"{tmpdir}/metadb.csv"
+        metadb = create_metadb(gen, 5, stop_conditions={"max_datasets": 4},
+                               output_path=outpath)
+
+        assert metadb
+        assert Path(outpath).exists()
+        assert pd.read_csv(outpath).shape[1] > 1
+
+
 def test_createmetadb_static():
     generators = [("HyperplaneGenerator",
                    {"n_features": [5, 10, 15]}),

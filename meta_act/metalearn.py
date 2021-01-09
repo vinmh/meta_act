@@ -5,6 +5,8 @@ import joblib
 import sklearn
 from imblearn.over_sampling import SMOTE
 from sklearn.metrics import mean_squared_error, mean_absolute_error
+from sklearn.preprocessing import StandardScaler
+from sklearn.utils.multiclass import type_of_target
 
 
 class MetaLearner:
@@ -26,10 +28,21 @@ class MetaLearner:
                              "train_samples": 0}
             self.trained = False
 
-    def fit(self, X, y, oversample=True, test_data=None):
+    def fit(self, X, y, oversample=True, scale=True, test_data=None):
+        if scale:
+            scaler = StandardScaler()
+            scaler.fit(X)
+            X = scaler.transform(X)
+
         if oversample:
+            continuous = False
+            if type_of_target(y) == "continuous":
+                y = y.astype(int)
+                continuous = True
             smote = SMOTE(random_state=20)
             X, y = smote.fit_resample(X, y)
+            if continuous:
+                y = y.astype(float)
 
         self.model.fit(X, y)
         results = {"R^2-Train": self.model.score(X, y)}
