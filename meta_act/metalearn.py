@@ -7,7 +7,7 @@ from imblearn.over_sampling import SMOTE
 from sklearn.metrics import mean_squared_error, mean_absolute_error
 from sklearn.preprocessing import StandardScaler
 from sklearn.utils.multiclass import type_of_target
-
+import numpy as np
 
 class MetaLearner:
     def __init__(self, learner, *learner_args, **learner_kwargs):
@@ -27,22 +27,46 @@ class MetaLearner:
             self.metadata = {"sklearn_version": sklearn.__version__,
                              "train_samples": 0}
             self.trained = False
+            
+    def _scale(self, X):
+        scaler = StandardScaler()
+        scaler.fit(X)
+        return scaler.transform(X)
+    
+    def _eliminate_minority(self, X, y, threshold):
+        tmp_dst = X.copy(deep=True)
+        tmp_dst["Y"] = y
+        
+        minor = [val for val,_ in
+                 filter(lambda x: x[1] < threshold,
+                        zip(*np.unique(tmp_dst.Y, return_counts=True)))]
+        dst_no_minor = tmp_dst.loc[~tmp_dst["Y"].isin(minor)]
+        
+        return dst_no_minor.iloc[:, :-1], dst_no_minor.iloc[:, -1]
 
-    def fit(self, X, y, oversample=True, scale=True, test_data=None):
+    def fit(self, X, y, oversample=True, scale=True, test_data=None,
+            eliminate_minority=True, minority_threshold=50):
+        if eliminate_minority:
+            X, y = self._eliminate_minority(X, y, minority_threshold)
+            if test_data is not None and isinstance(test_data, tuple):
+                test_data = self._eliminate_minority(test_data[0], test_data[1],
+                                                     minority_threshold)
+        
         if scale:
-            scaler = StandardScaler()
-            scaler.fit(X)
-            X = scaler.transform(X)
+            X = self._scale(X)
+            if test_data is not None and isinstance(test_data, tuple):
+                test_data = (self._scale(test_data[0]), test_data[1], )
 
         if oversample:
             continuous = False
             if type_of_target(y) == "continuous":
-                y = y.astype(int)
+                original_dtype = y.dtype
+                y = y.astype('str')
                 continuous = True
-            smote = SMOTE(random_state=20)
+            smote = SMOTE()
             X, y = smote.fit_resample(X, y)
             if continuous:
-                y = y.astype(float)
+                y = y.astype(original_dtype)
 
         self.model.fit(X, y)
         results = {"R^2-Train": self.model.score(X, y)}
@@ -58,9 +82,14 @@ class MetaLearner:
         self.metadata = dict(self.metadata, **results)
         return results
 
-    def test(self, X, y):
+    def test(self, X, y, scale=True, eliminate_minority=True,
+             minority_threshold=50):
         if not self.trained:
             raise ValueError("Model not trained!")
+        if eliminate_minority:
+            X, y = self._eliminate_minority(X, y, minority_threshold)
+        if scale:
+            X = self._scale(X)
         results = {"R^2-Test": self.model.score(X, y)}
         test_predict = self.model.predict(X)
         results["MSE"] = mean_squared_error(y, test_predict)

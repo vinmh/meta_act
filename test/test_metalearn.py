@@ -2,6 +2,7 @@ import json
 import tempfile
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestRegressor
 
@@ -18,7 +19,9 @@ def test_metaleaner_predict():
 
     X = metadb.iloc[:, :-9]
     y = metadb.iloc[:, -1]
-
+    
+    print(np.unique(y, return_counts=True))
+    
     learner.fit(X, y)
 
     results = learner.test(X, y)
@@ -46,8 +49,11 @@ def test_save_load_model():
 
         X = metadb.iloc[:, :-9]
         y = metadb.iloc[:, -1]
+        
+        minor_removed_X, _ = learner._eliminate_minority(X, y, 50)
+        train_sample_cnt = minor_removed_X.shape[0]
 
-        learner.fit(X, y, oversample=False)
+        learner.fit(X, y, oversample=False, minority_threshold=50)
         learner.save_model(model_path)
 
         new_learner = MetaLearner(model_path)
@@ -62,7 +68,7 @@ def test_save_load_model():
 
         assert Path(model_path).exists()
         assert "sklearn_version" in metadata
-        assert metadata["train_samples"] == X.shape[0]
+        assert metadata["train_samples"] == train_sample_cnt
         assert len(vals) == 4
         for val in vals:
             assert isinstance(val, float)
