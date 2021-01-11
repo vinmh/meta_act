@@ -1,12 +1,15 @@
 import math
 
+import tsfel
 from scipy.stats import entropy
+
+from meta_act.windows import get_window_features
 
 
 class ActiveLearner:
     def __init__(
             self, z_val, stream, model, budget=None, budget_window=None,
-            grace_period=None
+            grace_period=None, store_history=False
     ):
         self.z_val = z_val
         self.model = model
@@ -22,6 +25,7 @@ class ActiveLearner:
         self.miss = 0
         self.queries = 0
         self.samples_seen = 0
+        self.history = None if not store_history else []
 
         X, y = self.stream.next_sample(self.grace_period)
         self._prequential_eval(X, y)
@@ -74,7 +78,26 @@ class ActiveLearner:
                 )
 
             self._prequential_eval(X, y, query)
+            if self.history is not None:
+                self.history.append((X, y))
             self.samples_seen += 1
             return self.hits, self.miss, self.accuracy, query
         else:
             return self.hits, self.miss, self.accuracy, None
+
+    def get_last_window(self, mfe_features=None, tsfel_config=None,
+                        features_summaries=None):
+        if features_summaries is None:
+            features_summaries = ["max", "min", "mean", "var"]
+        if mfe_features is None:
+            mfe_features = ["nr_class", "attr_ent", "kurtosis", "skewness"]
+        if tsfel_config is None:
+            tsfel_config = tsfel.get_features_by_domain()
+        if self.history is not None:
+            X = [sample for x in self.history for sample in x[0]]
+            features = get_window_features(X, mfe_features, tsfel_config,
+                                           features_summaries)
+            self.history = []
+            return features
+        else:
+            return None

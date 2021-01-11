@@ -102,6 +102,12 @@ Window features may be extracted from a stream window with the function:
 meta_act.windows.get_window_features(X, mfe_features, tsfel_config, summary_funcs)
 ```
 
+This can be facilitated with the use of the ActiveLearner class in `meta_act.act_learner.ActiveLearner`. It allows the
+use of the parameter `store_history` that when set to _True_, the learner will store all data used to train its model
+and when the function
+`ActiveLearner.get_last_window(mfe_features, tsfel_config, summary_funcs)`
+is called, the learner will return the features of the entire stored history.
+
 This will return a single line of features to be used with the metalearner, X is expected to be a numpy array.
 
 With this, its possible to use the MetaLearner class from
