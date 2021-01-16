@@ -1,4 +1,5 @@
 import logging
+import math
 
 import pandas as pd
 from pymfe.mfe import MFE
@@ -27,7 +28,8 @@ def adwin_windows(data, delta, index_start=0):
     return windows
 
 
-def get_window_features(X, mfe_features, tsfel_config, summary_funcs):
+def get_window_features(X, mfe_features, tsfel_config,
+                        summary_funcs, n_classes=None):
     mfe = MFE(features=mfe_features, summary=summary_funcs)
     mfe.fit(X)
     mfe_feats = mfe.extract()
@@ -40,5 +42,9 @@ def get_window_features(X, mfe_features, tsfel_config, summary_funcs):
         {name: [value] for name, value in zip(mfe_feats[0], mfe_feats[1])}
     )
     stream_feats = pd.concat([stream_feats, tsfel_feats], axis=1)
+
+    if n_classes is not None:
+        stream_feats["n_classes"] = n_classes
+        stream_feats["max_possible_entropy"] = math.log(n_classes, 2)
 
     return stream_feats

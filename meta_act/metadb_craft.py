@@ -159,8 +159,10 @@ def create_metadb(stream_files: Union[Generator, List[str]], z_vals_n: int,
                 stream_feats = get_window_features(stream_npX,
                                                    mfe_features,
                                                    tsfel_config,
-                                                   features_summaries)
+                                                   features_summaries,
+                                                   n_classes)
 
+                # Metadata
                 stream_feats["dataset_name"] = stream_file_name
                 stream_feats["window_method"] = "adwin"
                 stream_feats["window_hp"] = window_adwin_delta
@@ -169,6 +171,8 @@ def create_metadb(stream_files: Union[Generator, List[str]], z_vals_n: int,
                 stream_feats["actl_queries"] = queries
                 stream_feats["window_start"] = window[0]
                 stream_feats["window_end"] = window[1]
+
+                # Z-Val
                 stream_feats["Y"] = float(z)
 
                 if metadb is None:

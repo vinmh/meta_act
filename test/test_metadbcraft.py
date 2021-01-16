@@ -14,8 +14,9 @@ def test_createmetadb_onthefly():
                               {"noise_percentage": [0.0, 0.1, 0.5],
                                "has_noise": [False, True],
                                "n_drift_features": [1, 3, 5]})],
-                            max_samples=10000)
-    metadb = create_metadb(gen, 5, stop_conditions={"max_datasets": 4})
+                            max_samples=5000)
+    metadb = create_metadb(gen, 5, stop_conditions={"max_datasets": 4},
+                           max_failures=1)
 
     assert metadb is not None
     assert isinstance(metadb, pd.DataFrame)
@@ -28,11 +29,11 @@ def test_createmetadb_savefile():
                               {"noise_percentage": [0.0, 0.1, 0.5],
                                "has_noise": [False, True],
                                "n_drift_features": [1, 3, 5]})],
-                            max_samples=10000)
+                            max_samples=5000)
     with tempfile.TemporaryDirectory() as tmpdir:
         outpath = f"{tmpdir}/metadb.csv"
         metadb = create_metadb(gen, 5, stop_conditions={"max_datasets": 4},
-                               output_path=outpath)
+                               output_path=outpath, max_failures=1)
 
         assert metadb
         assert Path(outpath).exists()

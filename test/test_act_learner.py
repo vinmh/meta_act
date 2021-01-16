@@ -17,9 +17,17 @@ def test_active_learning_window_extraction():
     for i in range(1000):
         learner.next_data()
 
-    wind = learner.get_last_window()
+    wind1 = learner.get_last_window()
 
-    print(wind)
+    for i in range(1000):
+        learner.next_data()
 
-    assert wind.shape[0] == 1
-    assert wind.shape[1] > 0
+    wind2 = learner.get_last_window(n_classes=5)
+
+    print(wind1)
+    print(wind2)
+
+    assert wind1.shape[0] == 1
+    assert wind1.shape[1] > 0
+    assert wind2.shape[0] == 1
+    assert wind2.shape[1] > 0

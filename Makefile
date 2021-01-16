@@ -1,16 +1,27 @@
 activate_venv:
-	(source venv/bin/activate)
-	pip install -r  requirements.txt
+	( \
+		source venv/bin/activate; \
+		pip install -r  requirements.txt; \
+	)
 
 install: test
-	pip install ./
+	( \
+		source venv/bin/activate; \
+		pip install ./; \
+	)
 
 build: test
-	python setup.py bdist_wheel
+	( \
+		source venv/bin/activate; \
+		python setup.py bdist_wheel; \
+	)
 
 test: activate_venv
-	coverage run --omit 'venv/*' -m pytest test
-	coverage-badge -fo coverage.svg
+	( \
+		source venv/bin/activate; \
+		coverage run --omit 'venv/*' -m pytest test; \
+		coverage-badge -fo coverage.svg; \
+	)
 
 clean:
 	rm -rf build
