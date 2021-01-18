@@ -86,3 +86,4 @@ def dataset_generator(generators: List[Tuple[str, Dict[str, List[Any]]]],
                     f"{'_'.join([f'{k}V{v}' for k, v in hyperparams.items()])}")
 
         yield np.hstack((X, np.array([y], dtype=int).T)), filename
+        gen_n += 1
