@@ -5,7 +5,7 @@ with open("README.md", "r") as readme:
 
 setuptools.setup(
     name="meta_act",
-    version="0.1.0",
+    version="0.2.0",
     author="Vinicius E. Martins",
     author_email="vini9x@gmail.com",
     description="Z-Value Meta-Recommender for Threshold based Active Learning",
@@ -16,6 +16,16 @@ setuptools.setup(
     classifiers=[
         "Programming Language :: Python :: 3.7",
         "Operating System :: GNU/Linux",
+    ],
+    install_requires=[
+        "scipy == 1.5.*",
+        "scikit-learn == 0.23.*",
+        "scikit-multiflow == 0.5.*",
+        "tsfel == 0.1.*",
+        "pymfe == 0.*",
+        "pandas == 1.1.2",
+        "numpy == 1.19.2",
+        "imbalanced-learn == 0.7.0",
     ],
     python_requires=">=3.5",
 )

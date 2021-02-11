@@ -34,8 +34,8 @@ class ActiveLearner:
         # Evaluation
         y_hat = self.model.predict(X)
         pred_compare = y == y_hat
-        new_hits = len(list(filter(lambda x: x, pred_compare)))
-        new_miss = len(list(filter(lambda x: not x, pred_compare)))
+        new_hits = len([x for x in pred_compare if x])
+        new_miss = len([x for x in pred_compare if not x])
 
         self.hits += new_hits
         self.miss += new_miss
@@ -47,6 +47,8 @@ class ActiveLearner:
         if query:
             self.queries += 1
             self.model.partial_fit(X, y, classes=self.stream.target_values)
+
+        return pred_compare
 
     def next_data(self):
         if self.stream.has_more_samples():
@@ -77,13 +79,13 @@ class ActiveLearner:
                         or math.isnan(entropy_val)
                 )
 
-            self._prequential_eval(X, y, query)
+            hit = self._prequential_eval(X, y, query)
             if self.history is not None:
                 self.history.append((X, y))
             self.samples_seen += 1
-            return self.hits, self.miss, self.accuracy, query
+            return self.hits, self.miss, self.accuracy, query, hit
         else:
-            return self.hits, self.miss, self.accuracy, None
+            return self.hits, self.miss, self.accuracy, None, None
 
     def get_last_window(self, mfe_features=None, tsfel_config=None,
                         features_summaries=None, n_classes=None):

@@ -145,7 +145,7 @@ def create_metadb(stream_files: Union[Generator, List[str]], z_vals_n: int,
                     results = []
                     query = False
                     while query is not None:
-                        hits, miss, accuracy, query = learner.next_data()
+                        hits, miss, accuracy, query, _ = learner.next_data()
                         results.append({"acc": accuracy, "query": query})
                     stream_results[str(z_val)] = results
                     stream.restart()
