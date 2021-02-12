@@ -22,6 +22,21 @@ def test_createmetadb_onthefly():
     assert isinstance(metadb, pd.DataFrame)
 
 
+def test_createmetadb_fixed_windows():
+    gen = dataset_generator([("HyperplaneGenerator",
+                              {"n_features": [5, 10, 15]}),
+                             ("LEDGeneratorDrift",
+                              {"noise_percentage": [0.0, 0.1, 0.5],
+                               "has_noise": [False, True],
+                               "n_drift_features": [1, 3, 5]})],
+                            max_samples=5000)
+    metadb = create_metadb(gen, 5, stop_conditions={"max_datasets": 4},
+                           max_failures=1, fixed_windows_size=1000)
+
+    assert metadb is not None
+    assert isinstance(metadb, pd.DataFrame)
+
+
 def test_createmetadb_savefile():
     gen = dataset_generator([("HyperplaneGenerator",
                               {"n_features": [5, 10, 15]}),

@@ -22,6 +22,7 @@ def create_metadb(stream_files: Union[Generator, List[str]], z_vals_n: int,
                   window_adwin_delta=0.0001,
                   window_hf_kwargs=None,
                   z_val_hf_kwargs=None,
+                  fixed_windows_size=None,
                   mfe_features=None,
                   tsfel_config=None,
                   features_summaries=None,
@@ -36,16 +37,26 @@ def create_metadb(stream_files: Union[Generator, List[str]], z_vals_n: int,
     logging.info(f"Z-Value Selection Margin: {z_val_selection_margin}.")
     logging.info(f"Prequential Eval Pre-train samples (Window Detection): "
                  f"{window_pre_train_sample_n}.")
-    logging.info(f"Adwin Delta (Window Detection): {window_adwin_delta}.")
-
-    if window_hf_kwargs is None:
-        window_hf_kwargs = {}
-        log_txt = "Default values"
+    if fixed_windows_size is not None:
+        logging.info(f"Using fixed windows with size: {fixed_windows_size}")
+        use_fixed_windows = True
+        window_adwin_delta = fixed_windows_size
     else:
-        log_txt = dict_str_creator(window_hf_kwargs)
-    logging.info(f"Hoeffding Tree (Window detection) hyperparameters: "
-                 f"{log_txt}.")
-    pre_train_sample_amount += window_hf_kwargs.get("grace_period", 200)
+        logging.info("Generating windows through Adwin")
+        logging.info(f"Adwin Delta (Window Detection): {window_adwin_delta}.")
+        use_fixed_windows = False
+
+    if not use_fixed_windows:
+        if window_hf_kwargs is None:
+            window_hf_kwargs = {}
+            log_txt = "Default values"
+        else:
+            log_txt = dict_str_creator(window_hf_kwargs)
+        logging.info(f"Hoeffding Tree (Window detection) hyperparameters: "
+                     f"{log_txt}.")
+        pre_train_sample_amount += window_hf_kwargs.get("grace_period", 200)
+    else:
+        window_hf_kwargs = {}
 
     if z_val_hf_kwargs is None:
         z_val_hf_kwargs = {}
@@ -126,7 +137,8 @@ def create_metadb(stream_files: Union[Generator, List[str]], z_vals_n: int,
             logging.info(f"{n_classes} classes found in {stream_file_name},"
                          f"z_vals= {', '.join([str(z) for z in z_vals])}")
             windows = get_windows(full_stream_file, window_pre_train_sample_n,
-                                  window_adwin_delta, window_hf_kwargs)
+                                  window_adwin_delta, window_hf_kwargs,
+                                  use_fixed_windows=use_fixed_windows)
             window_grace_period = window_hf_kwargs.get("grace_period", 200)
             windows = list(
                 filter(lambda x: x[1] - x[0] >= window_grace_period * 2,

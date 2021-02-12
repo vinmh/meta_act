@@ -9,11 +9,20 @@ from meta_act.learner import get_error_hoeffdingtree
 from meta_act.tsfel_ext import gen_tsfel_features
 
 
-def get_windows(data, pre_train_size, delta, hf_kwargs):
-    eval_data = get_error_hoeffdingtree(data, pre_train_size, **hf_kwargs)
-    windows = adwin_windows(eval_data, delta, index_start=pre_train_size)
-    logging.info(f"{len(windows)} adwin windows found")
-    return windows
+def get_windows(data, pre_train_size, delta_or_windsize, hf_kwargs=None,
+                use_fixed_windows=False):
+    if use_fixed_windows:
+        windows = fixed_windows(data, delta_or_windsize, pre_train_size)
+        logging.info(f"{len(windows)} fixed windows found")
+        return windows
+    else:
+        if hf_kwargs is None:
+            hf_kwargs = {}
+        eval_data = get_error_hoeffdingtree(data, pre_train_size, **hf_kwargs)
+        windows = adwin_windows(eval_data, delta_or_windsize,
+                                index_start=pre_train_size)
+        logging.info(f"{len(windows)} adwin windows found")
+        return windows
 
 
 def adwin_windows(data, delta, index_start=0):
@@ -25,6 +34,15 @@ def adwin_windows(data, delta, index_start=0):
         if adwin.detected_change():
             windows.append((last_i, i + index_start))
             last_i = i + index_start
+    return windows
+
+
+def fixed_windows(data, size, index_start=0):
+    windows = []
+    last_i = index_start
+    for i in range(index_start, len(data), size):
+        windows.append((last_i, i + index_start))
+        last_i = i + index_start
     return windows
 
 
