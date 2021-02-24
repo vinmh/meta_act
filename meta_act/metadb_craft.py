@@ -18,14 +18,17 @@ from meta_act.windows import get_windows
 
 def create_metadb(stream_files: Union[Generator, List[str]], z_vals_n: int,
                   z_val_selection_margin=0.02,
+                  fixed_z_val_threshold=None,
                   window_pre_train_sample_n=300,
                   window_adwin_delta=0.0001,
                   window_hf_kwargs=None,
                   z_val_hf_kwargs=None,
+                  wind_acc_summary="max",
                   fixed_windows_size=None,
                   mfe_features=None,
                   tsfel_config=None,
                   features_summaries=None,
+                  window_acc_delta_feature=True,
                   output_path=None,
                   stop_conditions=None,
                   max_failures=100):
@@ -35,6 +38,14 @@ def create_metadb(stream_files: Union[Generator, List[str]], z_vals_n: int,
 
     logging.info(f"Z-Value Candidates Amount: {z_vals_n}.")
     logging.info(f"Z-Value Selection Margin: {z_val_selection_margin}.")
+    if fixed_z_val_threshold is None or not isinstance(fixed_z_val_threshold,
+                                                       tuple):
+        logging.info("Z-Value Fixed selection threshold not set.")
+    else:
+        l_thresh = fixed_z_val_threshold[0]
+        u_thresh = fixed_z_val_threshold[1]
+        logging.info(f"Z-Value Fixed selection threshold set to:"
+                     f" {l_thresh} <= x <= {u_thresh}.")
     logging.info(f"Prequential Eval Pre-train samples (Window Detection): "
                  f"{window_pre_train_sample_n}.")
     if fixed_windows_size is not None:
@@ -67,6 +78,9 @@ def create_metadb(stream_files: Union[Generator, List[str]], z_vals_n: int,
                  f"{log_txt}.")
     pre_train_sample_amount += z_val_hf_kwargs.get("grace_period", 200)
 
+    logging.info(f"Accuracy summary used for z-val and window features:"
+                 f" {wind_acc_summary}")
+
     if mfe_features is None:
         mfe_features = ["nr_class", "attr_ent", "kurtosis", "skewness"]
         log_txt = f"(Default): {', '.join(mfe_features)}"
@@ -87,6 +101,9 @@ def create_metadb(stream_files: Union[Generator, List[str]], z_vals_n: int,
     else:
         log_txt = f": {', '.join(features_summaries)}"
     logging.info(f"Metadatabase feature summarizations {log_txt}")
+
+    logging.info(f"Include Mean Window Accuracy Delta Feature:"
+                 f" {window_acc_delta_feature}")
 
     if inspect.isgenerator(stream_files):
         stream_from_generator = True
@@ -121,6 +138,7 @@ def create_metadb(stream_files: Union[Generator, List[str]], z_vals_n: int,
     metadb = None
     failures = 0
     stream_files_used = 0
+    last_window_acc = 0
     for stream_file in stream_files:
         stream_file_name = "<Error in getting stream name>"
         try:
@@ -133,7 +151,8 @@ def create_metadb(stream_files: Union[Generator, List[str]], z_vals_n: int,
             full_stream_fileX = full_stream_file[:, :-1]
             full_stream_fileY = full_stream_file[:, -1].astype(int)
             n_classes = np.unique(full_stream_fileY).shape[0]
-            z_vals = generate_zvals(n_classes, z_vals_n)
+            z_vals = generate_zvals(n_classes, z_vals_n,
+                                    fixed_thresh=fixed_z_val_threshold)
             logging.info(f"{n_classes} classes found in {stream_file_name},"
                          f"z_vals= {', '.join([str(z) for z in z_vals])}")
             windows = get_windows(full_stream_file, window_pre_train_sample_n,
@@ -164,15 +183,26 @@ def create_metadb(stream_files: Union[Generator, List[str]], z_vals_n: int,
 
                 # Best Z-val
                 z, acc, queries, top_zs = get_best_z_last(
-                    stream_results, selection_margin=z_val_selection_margin
+                    stream_results, selection_margin=z_val_selection_margin,
+                    acc_param=wind_acc_summary
                 )
+
+                if window_acc_delta_feature:
+                    last_acc = last_window_acc
+                    curr_acc = acc
+                    last_window_acc = acc
+                else:
+                    last_acc = None
+                    curr_acc = None
 
                 # MetaDB features
                 stream_feats = get_window_features(stream_npX,
                                                    mfe_features,
                                                    tsfel_config,
                                                    features_summaries,
-                                                   n_classes)
+                                                   n_classes,
+                                                   last_acc,
+                                                   curr_acc)
 
                 # Metadata
                 stream_feats["dataset_name"] = stream_file_name
@@ -233,27 +263,39 @@ def create_metadb(stream_files: Union[Generator, List[str]], z_vals_n: int,
         return True
 
 
-def generate_zvals(classes, n_vals, log_func=None):
+def generate_zvals(classes, n_vals, log_func=None, fixed_thresh=None):
     if log_func is None:
         log_func = print
-    max_entropy = math.log(classes, 2)
-    interval = round(max_entropy / n_vals, 2)
-    log_func(f"Max_entropy={max_entropy}, interval set to {interval}")
-    z_vals = [round(x, 2) for x in np.arange(interval, max_entropy, interval)]
+    if fixed_thresh is not None:
+        min_value = fixed_thresh[0]
+        max_value = fixed_thresh[1]
+        interval = round((max_value - min_value) / n_vals, 2)
+        log_func(f"Z-val between [{min_value}, {max_value}], interval set"
+                 f"to {interval}")
+    else:
+        max_value = math.log(classes, 2)
+        interval = round(max_value / n_vals, 2)
+        min_value = interval
+        log_func(f"Max_entropy={max_value}, interval set to {interval}")
+    z_vals = [round(x + min_value, 2)
+              for x in np.arange(min_value, max_value, interval)]
     return z_vals
 
 
-def get_best_z_last(data, selection_margin=0.01):
-    pds = {"z": [], "last_acc": [], "queries": []}
+def get_best_z_last(data, selection_margin=0.01, acc_param="max"):
+    pds = {"z": [], "acc": [], "queries": []}
     for z, dat in data.items():
         z_df = pd.DataFrame(dat)
-        last_acc = z_df.iloc[-1]["acc"]
+        if acc_param == "max":
+            acc = z_df.iloc[-1]["acc"]
+        else:
+            acc = z_df.mean()["acc"]
         queries = (z_df["query"] * 1).sum()
         pds["z"].append(z)
-        pds["last_acc"].append(last_acc)
+        pds["acc"].append(acc)
         pds["queries"].append(queries)
     all_df = pd.DataFrame(pds)
-    max_acc = all_df["last_acc"].max()
-    top = all_df.loc[all_df["last_acc"] >= max_acc - selection_margin]
+    max_acc = all_df["acc"].max()
+    top = all_df.loc[all_df["acc"] >= max_acc - selection_margin]
     ideal_z = top.sort_values(by=["queries"]).iloc[0]
-    return ideal_z["z"], ideal_z["last_acc"], ideal_z["queries"], top.shape[0]
+    return ideal_z["z"], ideal_z["acc"], ideal_z["queries"], top.shape[0]

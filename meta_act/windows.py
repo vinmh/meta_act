@@ -47,7 +47,8 @@ def fixed_windows(data, size, index_start=0):
 
 
 def get_window_features(X, mfe_features, tsfel_config,
-                        summary_funcs, n_classes=None):
+                        summary_funcs, n_classes=None,
+                        last_window_acc=None, current_acc=None):
     mfe = MFE(features=mfe_features, summary=summary_funcs)
     mfe.fit(X)
     mfe_feats = mfe.extract()
@@ -60,6 +61,9 @@ def get_window_features(X, mfe_features, tsfel_config,
         {name: [value] for name, value in zip(mfe_feats[0], mfe_feats[1])}
     )
     stream_feats = pd.concat([stream_feats, tsfel_feats], axis=1)
+
+    if last_window_acc is not None and current_acc is not None:
+        stream_feats["window_acc_delta"] = current_acc - last_window_acc
 
     if n_classes is not None:
         stream_feats["n_classes"] = n_classes
