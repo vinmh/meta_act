@@ -5,7 +5,7 @@ with open("README.md", "r") as readme:
 
 setuptools.setup(
     name="meta_act",
-    version="0.4.0",
+    version="0.4.1",
     author="Vinicius E. Martins",
     author_email="vini9x@gmail.com",
     description="Z-Value Meta-Recommender for Threshold based Active Learning",
