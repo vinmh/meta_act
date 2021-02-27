@@ -88,7 +88,8 @@ class ActiveLearner:
             return self.hits, self.miss, self.accuracy, None, None
 
     def get_last_window(self, mfe_features=None, tsfel_config=None,
-                        features_summaries=None, n_classes=None):
+                        features_summaries=None, n_classes=None,
+                        last_window_acc=None, current_acc=None):
         if features_summaries is None:
             features_summaries = ["max", "min", "mean", "var"]
         if mfe_features is None:
@@ -98,7 +99,10 @@ class ActiveLearner:
         if self.history is not None:
             X = [sample for x in self.history for sample in x[0]]
             features = get_window_features(X, mfe_features, tsfel_config,
-                                           features_summaries, n_classes)
+                                           features_summaries,
+                                           n_classes=n_classes,
+                                           last_window_acc=last_window_acc,
+                                           current_acc=current_acc)
             self.history = []
             return features
         else:
