@@ -1,9 +1,13 @@
 import math
+from statistics import mean
 
 import tsfel
 from scipy.stats import entropy
 
 from meta_act.windows import get_window_features
+
+summary_funcs = {"max": max,
+                 "mean": mean}
 
 
 class ActiveLearner:
@@ -26,6 +30,7 @@ class ActiveLearner:
         self.queries = 0
         self.samples_seen = 0
         self.history = None if not store_history else []
+        self.last_window_acc = 0
 
         X, y = self.stream.next_sample(self.grace_period)
         self._prequential_eval(X, y)
@@ -81,7 +86,7 @@ class ActiveLearner:
 
             hit = self._prequential_eval(X, y, query)
             if self.history is not None:
-                self.history.append((X, y))
+                self.history.append((X, y, self.accuracy))
             self.samples_seen += 1
             return self.hits, self.miss, self.accuracy, query, hit
         else:
@@ -89,7 +94,7 @@ class ActiveLearner:
 
     def get_last_window(self, mfe_features=None, tsfel_config=None,
                         features_summaries=None, n_classes=None,
-                        last_window_acc=None, current_acc=None):
+                        delta_acc_summary_func=None):
         if features_summaries is None:
             features_summaries = ["max", "min", "mean", "var"]
         if mfe_features is None:
@@ -98,6 +103,15 @@ class ActiveLearner:
             tsfel_config = tsfel.get_features_by_domain()
         if self.history is not None:
             X = [sample for x in self.history for sample in x[0]]
+            if delta_acc_summary_func is not None:
+                current_acc = summary_funcs[delta_acc_summary_func](
+                    [x[2] for x in self.history]
+                )
+                last_window_acc = self.last_window_acc
+                self.last_window_acc = current_acc
+            else:
+                last_window_acc = None
+                current_acc = None
             features = get_window_features(X, mfe_features, tsfel_config,
                                            features_summaries,
                                            n_classes=n_classes,
