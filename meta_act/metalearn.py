@@ -83,6 +83,7 @@ class MetaLearner:
             results["R^2-Test"] = self.model.score(test_data[0], test_data[1])
             test_predict = self.model.predict(test_data[0])
             results["MSE"] = mean_squared_error(test_data[1], test_predict)
+            results["RMSE"] = mean_squared_error(test_data[1], test_predict, squared=False)
             results["MAE"] = mean_absolute_error(test_data[1], test_predict)
 
         self.trained = True
