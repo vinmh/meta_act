@@ -1,19 +1,321 @@
 import inspect
+import json
 import logging
 import math
+import shutil
 import traceback
+from collections import defaultdict
+from multiprocessing import Process, Queue
+from pathlib import Path
 from typing import Union, Generator, List
 
 import numpy as np
 import pandas as pd
 import tsfel
 from skmultiflow.data import DataStream
+from skmultiflow.drift_detection.adwin import ADWIN
 from skmultiflow.trees import HoeffdingTreeClassifier
 
 from meta_act.act_learner import ActiveLearner
+from meta_act.ds_gen import DatasetGeneratorPackage
 from meta_act.util import dict_str_creator
 from meta_act.windows import get_window_features
-from meta_act.windows import get_windows
+from meta_act.windows import old_get_windows, get_windows
+
+
+class MetaDBCrafter:
+    WINDOW_METADATA_FILENAME = "window_metadata.json"
+
+    def __init__(
+            self,
+            z_vals_n,
+            z_val_selection_margin=0.02,
+            fixed_z_val_threshold=None,
+            window_pre_train_sample_n=300,
+            window_drift_detector=None,
+            window_drift_detector_kwargs=None,
+            window_classifier=None,
+            window_classifier_kwargs=None,
+            window_acc_summary="max",
+            mfe_features=None,
+            tsfel_config=None,
+            feature_summaries=None,
+            output_path=None,
+            target_samples=200000,
+            thread_package_size=10,
+            threads_number=4,
+            use_window_cache=True,
+            cache_dir="./.window_cache"
+    ):
+        self.z_vals_n = z_vals_n
+        self.z_val_selection_margin = z_val_selection_margin
+        self.fixed_z_val_threshold = fixed_z_val_threshold
+        self.window_pre_train_size = window_pre_train_sample_n
+        if window_drift_detector is None:
+            self.window_drift_detector = ADWIN(0.0001)
+        else:
+            self.window_drift_detector = window_drift_detector
+            if window_drift_detector_kwargs is None:
+                self.window_drift_detector_kwargs = {}
+            else:
+                self.window_drift_detector_kwargs = window_drift_detector_kwargs
+        if window_classifier is None:
+            self.window_classifier = HoeffdingTreeClassifier()
+        else:
+            self.window_classifier = window_classifier
+            if window_classifier_kwargs is None:
+                self.window_classifier_kwargs = {}
+            else:
+                self.window_classifier_kwargs = window_classifier_kwargs
+        self.window_acc_summary = window_acc_summary
+        self.mfe_features = mfe_features
+        self.tsfel_config = tsfel_config
+        if feature_summaries is None:
+            self.feature_summaries = ["max", "min", "mean", "var"]
+        else:
+            self.feature_summaries = feature_summaries
+        self.output_path = output_path
+        self.target_samples = target_samples
+        self.thread_packages = thread_package_size
+        self.thread_n = threads_number
+        self.use_window_cache = use_window_cache
+        self.cache_dir = Path(cache_dir)
+
+    def _fetch_metadata(self):
+        metadata_file = self.cache_dir / self.WINDOW_METADATA_FILENAME
+        if not metadata_file.exists():
+            return None
+
+        with open(metadata_file) as f:
+            metadata = json.load(f)
+
+        return metadata
+
+    def _fetch_cache(self):
+        if not self.cache_dir.exists():
+            return None
+
+        metadata = self._fetch_metadata()
+        if metadata is None:
+            return None
+
+        window_filelist = list(x.name for x in self.cache_dir.glob("*.npz"))
+        if len(window_filelist) == 0:
+            return None
+
+        return window_filelist, metadata
+
+    def _generate_zvals(self, classes):
+        if self.fixed_z_val_threshold is not None:
+            min_value = self.fixed_z_val_threshold[0]
+            max_value = self.fixed_z_val_threshold[1]
+            interval = round((max_value - min_value) / self.z_vals_n, 2)
+        else:
+            max_value = math.log(classes, 2)
+            interval = round(max_value / self.z_vals_n, 2)
+            min_value = interval
+
+        z_vals = [round(x + min_value, 2)
+                  for x in np.arange(min_value, max_value, interval)]
+
+        return z_vals
+
+    def _get_best_z(self, data):
+        pds = {"z": [], "acc": [], "queries": []}
+        for z, dat in data.items():
+            z_df = pd.DataFrame(dat)
+            if self.window_acc_summary == "max":
+                acc = z_df.iloc[-1]["acc"]
+            else:
+                acc = z_df.mean()["acc"]
+            queries = (z_df["query"] * 1).sum()
+            pds["z"].append(z)
+            pds["acc"].append(acc)
+            pds["queries"].append(queries)
+        all_df = pd.DataFrame(pds)
+        max_acc = all_df["acc"].max()
+        top = all_df.loc[all_df["acc"] >= max_acc - self.z_val_selection_margin]
+        ideal_z = top.sort_values(by=["queries"]).iloc[0]
+        return ideal_z["z"], ideal_z["acc"], ideal_z["queries"], top.shape[0]
+
+    def generate_windows(
+            self, generator_package: DatasetGeneratorPackage,
+    ):
+        shutil.rmtree(self.cache_dir, ignore_errors=True)
+        self.cache_dir.mkdir(parents=True)
+
+        windows_written = 0
+        files_list = []
+        stream_metadata = defaultdict(dict)
+        target_reached = False
+        for stream_file, stream_name in generator_package.generate_datasets():
+            drift_detector = self.window_drift_detector(
+                **self.window_drift_detector_kwargs
+            )
+            classifier = self.window_classifier(
+                **self.window_classifier_kwargs
+            )
+            windows = get_windows(stream_file,
+                                  self.window_pre_train_size,
+                                  drift_detector,
+                                  classifier)
+            n_classes = np.unique(stream_file[:, -1].astype(int)).shape[0]
+            z_vals = self._generate_zvals(n_classes)
+            stream_metadata[stream_name]["z_vals"] = z_vals
+            stream_metadata[stream_name]["windows"] = {}
+
+            file_count = 0
+            file_data = []
+            for window_n, window in enumerate(windows):
+                if windows_written >= self.target_samples:
+                    target_reached = True
+                    break
+
+                windows_written += 1
+                stream_metadata[stream_name]["windows"][str(window_n)] = {
+                    "start": window[0], "end": window[1], "classes": n_classes
+                }
+                win_data = stream_file[window[0]: window[1]]
+                file_data.append([window_n, win_data])
+                if (len(file_data) >= self.thread_packages or
+                        windows_written >= self.target_samples):
+                    filename = (
+                        f"{file_count}__{len(file_data)}__{stream_name}.npz"
+                    )
+                    file_dict = {
+                        f"{n}": data
+                        for n, data in file_data
+                    }
+                    np.savez(
+                        (self.cache_dir / filename).as_posix(), **file_dict
+                    )
+                    files_list.append(filename)
+
+            if target_reached:
+                break
+
+        with open(self.cache_dir / self.WINDOW_METADATA_FILENAME) as f:
+            json.dump(stream_metadata, f)
+
+        return files_list
+
+    def parse_window_file(self, filename, metadata):
+        file_path = Path(self.cache_dir) / filename
+        if not file_path.exists():
+            raise FileNotFoundError(
+                f"Missing specified window file: {filename}"
+            )
+
+        window_n, window_qtd, stream_name = filename.split("__")
+        window_file = np.load(file_path)
+        window_list = window_file["files"]
+        z_vals = metadata[stream_name]["z_vals"]
+
+        metadb_samples = []
+        for window_name in window_list:
+            window_metadata = metadata[stream_name]["windows"][window_name]
+            window_data = window_file[window_name]
+            window_x = window_data[:, :-1]
+            window_y = window_data[:, -1].astype(int)
+
+            stream = DataStream(window_x, y=window_y)
+
+            wind_results = {}
+            for z_val in z_vals:
+                model = self.window_classifier(**self.window_classifier_kwargs)
+                learner = ActiveLearner(z_val, stream, model)
+                results = []
+                query = False
+                while query is not None:
+                    hits, miss, acc, query, _ = learner.next_data()
+                    results.append({"acc": acc, "query": query})
+                wind_results[str(z_val)] = results
+                stream.reset()
+
+            z, acc, queries, top_z = self._get_best_z(wind_results)
+
+            features = get_window_features(
+                window_x, self.mfe_features, self.tsfel_config,
+                self.feature_summaries, n_classes=window_metadata["classes"]
+            )
+
+            features["dataset_name"] = stream_name
+            features["actl_acc"] = acc
+            features["actl_queries"] = queries
+            features["window_start"] = (
+                metadata[stream_name]["windows"][window_name]["start"]
+            )
+            features["window_end"] = (
+                metadata[stream_name]["windows"][window_name]["end"]
+            )
+            features["window_batch"] = window_name
+
+            features["Y"] = float(z)
+
+            metadb_samples.append(features)
+
+        return pd.concat(metadb_samples).reset_index(drop=True)
+
+    def _creator_thread_func(self, file_list, metadata, queue):
+        metadb_sample_list = [
+            self.parse_window_file(filename, metadata)
+            for filename in file_list
+        ]
+        queue.put(metadb_sample_list)
+
+    def _partition_files_per_thread(self, file_list):
+        files_per_thread_n = len(file_list) // self.thread_n
+        files_per_thread = [
+            file_list[i:i + files_per_thread_n]
+            for i in range(0, len(file_list), files_per_thread_n)
+        ]
+        if len(files_per_thread) > 0:
+            for extra_i, extra in enumerate(files_per_thread[self.thread_n:]):
+                files_per_thread[extra_i % self.thread_n] += extra
+
+        return files_per_thread
+
+    def create_metadb_threaded(
+            self, generator_package: DatasetGeneratorPackage
+    ):
+        if not self.use_window_cache:
+            file_list = self.generate_windows(generator_package)
+            metadata = self._fetch_metadata()
+        else:
+            cache = self._fetch_cache()
+            if cache is None:
+                file_list = self.generate_windows(generator_package)
+                metadata = self._fetch_metadata()
+            else:
+                file_list = cache[0]
+                metadata = cache[1]
+
+        files_per_thread = self._partition_files_per_thread(file_list)
+
+        results_queue = Queue()
+        processes = [
+            Process(
+                target=self._creator_thread_func,
+                args=(files, metadata, results_queue)
+            )
+            for files in files_per_thread
+        ]
+
+        for process in processes:
+            process.start()
+
+        for process in processes:
+            process.join()
+
+        metadb_chunks = []
+        while not results_queue.empty():
+            metadb_chunks.append(results_queue.get())
+
+        full_metadb = pd.concat(metadb_chunks)
+        if self.output_path is not None:
+            full_metadb.to_csv(self.output_path)
+
+        return full_metadb
 
 
 def create_metadb(stream_files: Union[Generator, List[str]], z_vals_n: int,
@@ -155,9 +457,10 @@ def create_metadb(stream_files: Union[Generator, List[str]], z_vals_n: int,
                                     fixed_thresh=fixed_z_val_threshold)
             logging.info(f"{n_classes} classes found in {stream_file_name},"
                          f"z_vals= {', '.join([str(z) for z in z_vals])}")
-            windows = get_windows(full_stream_file, window_pre_train_sample_n,
-                                  window_adwin_delta, window_hf_kwargs,
-                                  use_fixed_windows=use_fixed_windows)
+            windows = old_get_windows(full_stream_file,
+                                      window_pre_train_sample_n,
+                                      window_adwin_delta, window_hf_kwargs,
+                                      use_fixed_windows=use_fixed_windows)
             window_grace_period = window_hf_kwargs.get("grace_period", 200)
             windows = list(
                 filter(lambda x: x[1] - x[0] >= window_grace_period * 2,
