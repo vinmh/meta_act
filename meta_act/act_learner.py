@@ -6,20 +6,19 @@ from scipy.stats import entropy
 
 from meta_act.windows import get_window_features
 
-summary_funcs = {"max": max,
-                 "mean": mean}
+summary_funcs = {
+    "max": max,
+    "mean": mean
+}
 
 
 class ActiveLearner:
     def __init__(
-            self, z_val, stream, model, budget=None, budget_window=None,
-            grace_period=None, store_history=False
+            self, z_val, model, budget=None, budget_window=None,
+            store_history=False
     ):
         self.z_val = z_val
         self.model = model
-        self.grace_period = (getattr(model, "grace_period", 200) if
-                             grace_period is None else grace_period)
-        self.stream = stream
         self.budget = budget
         self.budget_window = (budget_window if budget_window is not None
                               else 1000)
@@ -32,10 +31,7 @@ class ActiveLearner:
         self.history = None if not store_history else []
         self.last_window_acc = 0
 
-        X, y = self.stream.next_sample(self.grace_period)
-        self._prequential_eval(X, y)
-
-    def _prequential_eval(self, X, y, query=True):
+    def prequential_eval(self, X, y, target_values, query=True):
         # Evaluation
         y_hat = self.model.predict(X)
         pred_compare = y == y_hat
@@ -51,46 +47,42 @@ class ActiveLearner:
         # Train
         if query:
             self.queries += 1
-            self.model.partial_fit(X, y, classes=self.stream.target_values)
+            self.model.partial_fit(X, y, classes=target_values)
 
         return pred_compare
 
-    def next_data(self):
-        if self.stream.has_more_samples():
-            X, y = self.stream.next_sample()
-            probs = self.model.predict_proba(X)
-            entropy_val = entropy(probs[0], base=2)
+    def next_data(self, X, y, target_values):
+        probs = self.model.predict_proba(X)
+        entropy_val = entropy(probs[0], base=2)
 
-            if self.budget is not None:
-                if (
-                        self.budget_counter <= self.budget
-                        and self.budget_counter < self.budget_window
-                ):
-                    query = False
-                    self.budget_counter += 1
-                elif self.budget_counter >= self.budget_window:
-                    query = False
-                    self.budget_counter = 0
-                else:
-                    query = (
-                            entropy_val >= self.z_val
-                            or entropy_val == 0
-                            or math.isnan(entropy_val)
-                    )
+        if self.budget is not None:
+            if (
+                    self.budget_counter <= self.budget
+                    and self.budget_counter < self.budget_window
+            ):
+                query = False
+                self.budget_counter += 1
+            elif self.budget_counter >= self.budget_window:
+                query = False
+                self.budget_counter = 0
             else:
                 query = (
                         entropy_val >= self.z_val
                         or entropy_val == 0
                         or math.isnan(entropy_val)
                 )
-
-            hit = self._prequential_eval(X, y, query)
-            if self.history is not None:
-                self.history.append((X, y, self.accuracy))
-            self.samples_seen += 1
-            return self.hits, self.miss, self.accuracy, query, hit
         else:
-            return self.hits, self.miss, self.accuracy, None, None
+            query = (
+                    entropy_val >= self.z_val
+                    or entropy_val == 0
+                    or math.isnan(entropy_val)
+            )
+
+        hit = self.prequential_eval(X, y, target_values, query)
+        if self.history is not None:
+            self.history.append((X, y, self.accuracy))
+        self.samples_seen += 1
+        return self.hits, self.miss, self.accuracy, query, hit
 
     def get_last_window(self, mfe_features=None, tsfel_config=None,
                         features_summaries=None, n_classes=None,

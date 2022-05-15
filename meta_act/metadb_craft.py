@@ -249,6 +249,7 @@ class MetaDBCrafter:
             window_cache_dir: Path,
             classifier=None,
             classifier_kwargs=None,
+            act_learner_grace_period=200,
             mfe_features=None,
             tsfel_config=None,
             feature_summaries=None,
@@ -258,6 +259,7 @@ class MetaDBCrafter:
     ):
         self.z_val_generator = z_val_generator
         self.window_cache_dir = window_cache_dir
+        self.act_learner_grace_period = act_learner_grace_period
         self.mfe_features = mfe_features
         self.tsfel_config = tsfel_config
         if feature_summaries is None:
@@ -333,12 +335,20 @@ class MetaDBCrafter:
             wind_results = WindowResults()
             for z_val in z_vals:
                 model = self.classifier(**self.classifier_kwargs)
-                learner = ActiveLearner(z_val, stream, model)
-                query = False
-                while query is not None:
-                    hits, miss, acc, query, _ = learner.next_data()
-                    if query is not None:
-                        wind_results.add_result(str(z_val), acc, query)
+                learner = ActiveLearner(z_val, model)
+
+                pretrain_X, pretrain_y = stream.next_sample(
+                    self.act_learner_grace_period
+                )
+                learner.prequential_eval(
+                    pretrain_X, pretrain_y, stream.target_values
+                )
+                while stream.has_more_samples():
+                    X, y = stream.next_sample()
+                    hits, miss, acc, query, _ = learner.next_data(
+                        X, y, stream.target_values
+                    )
+                    wind_results.add_result(str(z_val), acc, query)
                 stream.restart()
 
             z, acc, queries = self.z_val_generator.get_best_z(wind_results)

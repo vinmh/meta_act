@@ -21,8 +21,10 @@ class MetaLearner:
                 with open(metadata_path, "r") as f:
                     self.metadata = json.load(f)
             else:
-                self.metadata = {"sklearn_version": sklearn.__version__,
-                                 "train_samples": 0}
+                self.metadata = {
+                    "sklearn_version": sklearn.__version__,
+                    "train_samples": 0
+                }
             if scaler_path.exists():
                 self.scaler = joblib.load(scaler_path)
             else:
@@ -30,8 +32,10 @@ class MetaLearner:
             self.trained = True
         else:
             self.model = learner(*learner_args, **learner_kwargs)
-            self.metadata = {"sklearn_version": sklearn.__version__,
-                             "train_samples": 0}
+            self.metadata = {
+                "sklearn_version": sklearn.__version__,
+                "train_samples": 0
+            }
             self.trained = False
             self.scaler = None
 
@@ -83,7 +87,8 @@ class MetaLearner:
             results["R^2-Test"] = self.model.score(test_data[0], test_data[1])
             test_predict = self.model.predict(test_data[0])
             results["MSE"] = mean_squared_error(test_data[1], test_predict)
-            results["RMSE"] = mean_squared_error(test_data[1], test_predict, squared=False)
+            results["RMSE"] = mean_squared_error(test_data[1], test_predict,
+                                                 squared=False)
             results["MAE"] = mean_absolute_error(test_data[1], test_predict)
 
         self.trained = True
