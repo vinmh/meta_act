@@ -45,8 +45,7 @@ class DatasetGeneratorPackage:
 
     def generate_datasets(self, max_datasets=None):
         gen_n = 0
-        datasets_n = 0
-        while datasets_n < max_datasets if max_datasets is not None else 1:
+        while gen_n < max_datasets if max_datasets is not None else 1:
             curr_gen = self.generators[gen_n % len(self.generators)]
             kwargs = curr_gen.random_combination()
             logging.debug(f"{gen_n}: Generating dataset from {curr_gen.name}")
@@ -58,7 +57,7 @@ class DatasetGeneratorPackage:
             while len(X) < self.max_samples and generator.has_more_samples():
                 X1, y1 = generator.next_sample()
                 X.append(X1)
-                y.append(y)
+                y.append(y1)
 
             X = np.concatenate(X)
             y = np.concatenate(y)

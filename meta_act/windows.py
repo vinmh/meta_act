@@ -69,24 +69,33 @@ def fixed_windows(data, size, index_start=0):
 def get_window_features(X, mfe_features, tsfel_config,
                         summary_funcs, n_classes=None,
                         last_window_acc=None, current_acc=None):
-    mfe = MFE(features=mfe_features, summary=summary_funcs)
-    mfe.fit(X)
-    mfe_feats = mfe.extract()
+    feat_dfs = []
+    if mfe_features is not None:
+        mfe = MFE(features=mfe_features, summary=summary_funcs)
+        mfe.fit(X)
+        mfe_feats = mfe.extract()
+        feat_dfs.append(pd.DataFrame(
+            {name: [value] for name, value in zip(mfe_feats[0], mfe_feats[1])}
+        ))
 
-    tsfel_feats = gen_tsfel_features(tsfel_config,
-                                     pd.DataFrame(X),
-                                     summary=summary_funcs)
+    if tsfel_config is not None:
+        tsfel_feats = gen_tsfel_features(tsfel_config,
+                                         pd.DataFrame(X),
+                                         summary=summary_funcs)
+        feat_dfs.append(tsfel_feats)
 
-    stream_feats = pd.DataFrame(
-        {name: [value] for name, value in zip(mfe_feats[0], mfe_feats[1])}
-    )
-    stream_feats = pd.concat([stream_feats, tsfel_feats], axis=1)
+    if len(feat_dfs) > 0:
+        stream_feats = pd.concat(feat_dfs, axis=1)
+    else:
+        stream_feats = pd.DataFrame()
 
     if last_window_acc is not None and current_acc is not None:
-        stream_feats["window_acc_delta"] = current_acc - last_window_acc
+        stream_feats["window_acc_delta"] = pd.Series(
+            current_acc - last_window_acc
+        )
 
     if n_classes is not None:
-        stream_feats["n_classes"] = n_classes
-        stream_feats["max_possible_entropy"] = math.log(n_classes, 2)
+        stream_feats["n_classes"] = pd.Series(n_classes)
+        stream_feats["max_possible_entropy"] = pd.Series(math.log(n_classes, 2))
 
     return stream_feats
