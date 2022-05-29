@@ -13,16 +13,18 @@ def test_active_learning_window_extraction():
     df = pd.read_csv(METADB_PATH)
     stream = DataStream(df)
 
-    learner = ActiveLearner(0.1, stream, HoeffdingTreeClassifier(),
+    learner = ActiveLearner(0.1, HoeffdingTreeClassifier(),
                             store_history=True)
 
     for i in range(1000):
-        learner.next_data()
+        X, y = stream.next_sample()
+        learner.next_data(X, y, stream.target_values)
 
     wind1 = learner.get_last_window()
 
     for i in range(1000):
-        learner.next_data()
+        X, y = stream.next_sample()
+        learner.next_data(X, y, stream.target_values)
 
     wind2 = learner.get_last_window(n_classes=5)
 
@@ -39,11 +41,12 @@ def test_active_learning_window_extraction_with_delta():
     df = pd.read_csv(METADB_PATH)
     stream = DataStream(df)
 
-    learner = ActiveLearner(0.1, stream, HoeffdingTreeClassifier(),
+    learner = ActiveLearner(0.1, HoeffdingTreeClassifier(),
                             store_history=True)
 
     for i in range(1000):
-        learner.next_data()
+        X, y = stream.next_sample()
+        learner.next_data(X, y, stream.target_values)
 
     new_curr1 = mean([x[2] for x in learner.history])
     old_last_window_acc1 = learner.last_window_acc
@@ -51,7 +54,8 @@ def test_active_learning_window_extraction_with_delta():
     wind1 = learner.get_last_window(delta_acc_summary_func="mean")
 
     for i in range(1000):
-        learner.next_data()
+        X, y = stream.next_sample()
+        learner.next_data(X, y, stream.target_values)
 
     new_curr2 = max([x[2] for x in learner.history])
     old_last_window_acc2 = learner.last_window_acc

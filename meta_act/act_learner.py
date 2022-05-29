@@ -1,7 +1,6 @@
 import math
 from statistics import mean
 
-import tsfel
 from scipy.stats import entropy
 
 from meta_act.windows import get_window_features
@@ -89,10 +88,6 @@ class ActiveLearner:
                         delta_acc_summary_func=None):
         if features_summaries is None:
             features_summaries = ["max", "min", "mean", "var"]
-        if mfe_features is None:
-            mfe_features = ["nr_class", "attr_ent", "kurtosis", "skewness"]
-        if tsfel_config is None:
-            tsfel_config = tsfel.get_features_by_domain()
         if self.history is not None:
             X = [sample for x in self.history for sample in x[0]]
             if delta_acc_summary_func is not None:

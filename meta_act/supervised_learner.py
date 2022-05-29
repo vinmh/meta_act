@@ -1,6 +1,3 @@
-from scipy.stats import entropy
-
-
 class SupervisedLearner:
     def __init__(self, model):
         self.model = model
@@ -28,9 +25,6 @@ class SupervisedLearner:
         return pred_compare
 
     def next_data(self, X, y, target_values):
-        probs = self.model.predict_proba(X)
-        entropy_val = entropy(probs[0], base=2)
-
         hit = self.prequential_eval(X, y, target_values)
         self.samples_seen += 1
         return self.hits, self.miss, self.accuracy, hit
