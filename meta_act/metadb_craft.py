@@ -105,11 +105,9 @@ class ZValGenerator:
 class StreamGenerator:
     def __init__(
             self,
-            z_val_generator: ZValGenerator,
             generator_package: DatasetGeneratorPackage,
             cache_dir="./.window_cache"
     ):
-        self.z_val_generator = z_val_generator
         self.generator_package = generator_package
         self.queue = Queue()
         self.cache_dir = Path(cache_dir)
