@@ -1,12 +1,84 @@
-import json
+import sys
 
 import numpy as np
 import pandas as pd
 
 from meta_act.ds_gen import DatasetGeneratorPackage, DatasetGenerator
 from meta_act.metadb_craft import (
-    MetaDBCrafter, WindowResults, ZValGenerator, WindowGenerator
+    MetaDBCrafter, WindowResults, ZValGenerator, StreamGenerator
 )
+
+
+class MockGenerator:
+    def __init__(self, hp1, hp2, hp3):
+        self.hp1 = hp1
+        self.hp2 = hp2
+        self.hp3 = hp3
+        self.has_samples = True
+
+    def has_more_samples(self):
+        return self.has_samples
+
+    def next_sample(self):
+        return np.array([[1 for _ in range(self.hp1)]]), np.array([self.hp2])
+
+
+class MockZValGenerator(ZValGenerator):
+    def __init__(self):
+        super().__init__(0)
+
+    def generate_z_vals(self, class_n: int):
+        return [x * 0.05 for x in range(1, class_n + 1)]
+
+    def get_best_z(self, data: WindowResults):
+        return data.get_results_table()[0]
+
+
+class MockModel:
+    def __init__(self):
+        self.samples = 0
+
+    def partial_fit(self, X, y, classes):
+        self.samples += X.shape[0]
+
+    def predict(self, X):
+        return X[:, -1]
+
+    def predict_proba(self, X):
+        return [0.5, 0.5]
+
+
+class MockDriftDetector():
+    def __init__(self):
+        self.samples = 0
+
+    def add_element(self, X):
+        self.samples += 1
+
+    def detected_change(self):
+        return self.samples % 10 == 0 if self.samples > 0 else False
+
+
+class MockStreamGenerator(StreamGenerator):
+    def __init__(self):
+        generators = [
+            DatasetGenerator(
+                "MockGenerator",
+                {"hp1": [1, 2, 3], "hp2": [4, 5, 6], "hp3": [7, 8, 9]},
+                sys.modules[__name__]
+            ),
+            DatasetGenerator(
+                "MockGenerator",
+                {"hp1": [1, 10, 20], "hp2": [30, 40, 50], "hp3": [60, 70, 80]},
+                sys.modules[__name__]
+            )
+        ]
+
+        package = DatasetGeneratorPackage(generators, 100)
+        super().__init__(MockZValGenerator(), package)
+        for i in range(10):
+            ds = package.generate_dataset(i)
+            self.queue.put(ds)
 
 
 def test_window_results_summaries():
@@ -82,91 +154,78 @@ def test_get_best_z():
     assert gen2.get_best_z(data)[0] == 0.1
 
 
-def test_window_get_stream(datadir):
-    z_val_gen = ZValGenerator(4)
-    wind_gen = WindowGenerator(z_val_gen, cache_dir=datadir / "test_cache")
+def test_stream_generator(datadir):
+    generators = [
+        DatasetGenerator(
+            "MockGenerator",
+            {"hp1": [1, 2, 3], "hp2": [4, 5, 6], "hp3": [7, 8, 9]},
+            sys.modules[__name__]
+        ),
+        DatasetGenerator(
+            "MockGenerator",
+            {"hp1": [0, 10, 20], "hp2": [30, 40, 50], "hp3": [60, 70, 80]},
+            sys.modules[__name__]
+        )
+    ]
+    package = DatasetGeneratorPackage(generators, 10)
 
-    generator1 = DatasetGenerator(
-        "HyperplaneGenerator", {"n_features": [5]}
-    )
-    package = DatasetGeneratorPackage([generator1], 10)
-    cnt = 0
-    for dat, name in wind_gen.get_stream(package):
+    z_val_gen = ZValGenerator(4)
+    stream_gen = StreamGenerator(z_val_gen, package, datadir / "test_cache")
+    stream_gen.start_generator()
+
+    ds_cnt = 3
+    ds_list = []
+    for _ in range(ds_cnt):
+        ds, name = stream_gen.queue.get(timeout=30)
         print(name)
-        print(dat)
-        if cnt == 0:
-            assert name == "elecNormNew.npy"
-            assert dat.shape == (45312, 8)
+        ds_list.append((ds, name))
+
+    stream_gen.signal_stop()
+    stream_gen.wait_generator_stop()
+
+    assert len(ds_list) == 3
+    for i, ds in enumerate(ds_list):
+        print(ds[1])
+        print(ds[0])
+        if i == 0:
+            assert ds[1] == "elecNormNew.npy"
+            assert ds[0].shape == (45312, 8)
         else:
-            assert name != "elecNormNew.npy"
-            assert dat.shape[0] == 10
-            break
-        cnt += 1
+            assert ds[1] != "elecNormNew.npy"
+            assert ds[0].shape[0] == 10
+    assert stream_gen.process is None
 
 
-def test_generate_windows(datadir):
-    cache_dir = datadir / "test_cache"
-    z_val_gen = ZValGenerator(4)
-    wind_gen = WindowGenerator(
-        z_val_gen, cache_dir=cache_dir, target_windows=10, window_package_size=2
-    )
+def test_partition_target():
+    crafter = MetaDBCrafter(MockZValGenerator(), threads_number=4)
+    targets = crafter.partition_target(2026)
 
-    generator1 = DatasetGenerator(
-        "HyperplaneGenerator", {"n_features": [5, 10, 15]}
-    )
-    generator2 = DatasetGenerator(
-        "LEDGeneratorDrift", {"noise_percentage": [0.0, 0.1, 0.5]}
-    )
-    package = DatasetGeneratorPackage([generator1, generator2], 1000)
-
-    file_list = wind_gen.generate_windows(package)
-    metadata_path = cache_dir / "windows" / wind_gen.WINDOW_METADATA_FILENAME
-    assert metadata_path.exists()
-    with open(metadata_path) as f:
-        metadata = json.load(f)
-    assert len(metadata.keys()) >= 1
-    assert len(file_list) == 5
-    for file_name in file_list:
-        filepath = cache_dir / "windows" / file_name
-        assert filepath.exists()
-        file_data = np.load(filepath)
-        assert len(file_data) == 2
+    assert targets[0] == 507
+    assert targets[1] == 507
+    assert targets[2] == 506
+    assert targets[3] == 506
 
 
-def test_parse_window_file(datadir):
-    cache_dir = datadir / "test_cache/windows"
-    z_val_gen = ZValGenerator(4)
+def test_create_samples(datadir):
     crafter = MetaDBCrafter(
-        z_val_gen, window_cache_dir=cache_dir,
-        mfe_features=["min", "mean", "max"], feature_summaries=["mean"]
+        MockZValGenerator(), MockModel, {}, MockDriftDetector,
+        {}, 5, 5, ["min", "max"], None, ["mean"]
     )
-    filename = "0__10__elecNormNew.npy.npz"
-    with open(cache_dir / "window_metadata.json") as f:
-        metadata = json.load(f)
 
-    samples = crafter.parse_window_file(filename, metadata)
-    print(samples)
+    samples = crafter.create_samples(MockStreamGenerator(), 10)
 
-    assert samples.shape[0] == 10
-    assert samples.shape[1] == 8
+    assert samples.shape == (10, 6)
 
 
 def test_create_metadb(datadir):
-    cache_dir = datadir / "test_cache/windows"
-    z_val_gen = ZValGenerator(4)
     crafter = MetaDBCrafter(
-        z_val_gen, window_cache_dir=cache_dir,
-        mfe_features=["min", "mean", "max"], feature_summaries=["mean"],
-        output_path=datadir / "out.csv", threads_number=2
+        MockZValGenerator(), MockModel, {}, MockDriftDetector,
+        {}, 5, 5, ["min", "max"], None, ["mean"], datadir / "metadb.csv",
+        2
     )
-    file_list = [
-        "0__10__elecNormNew.npy.npz", "1__10__elecNormNew.npy.npz",
-        "2__10__elecNormNew.npy.npz", "3__10__elecNormNew.npy.npz",
-        "4__10__elecNormNew.npy.npz"
-    ]
 
-    metadb = crafter.create_metadb(file_list)
+    metadb = crafter.create_metadb(MockStreamGenerator(), 20)
 
-    assert metadb.shape[0] == 50
-    assert (datadir / "out.csv").exists()
-    assert pd.read_csv(datadir / "out.csv").shape == (50, 8)
+    assert metadb.shape[0] == 20
+    assert (datadir / "metadb.csv").exists()
+    assert pd.read_csv(datadir / "metadb.csv").shape == (20, 6)

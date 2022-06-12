@@ -12,16 +12,9 @@ summary_funcs = {
 
 
 class ActiveLearner:
-    def __init__(
-            self, z_val, model, budget=None, budget_window=None,
-            store_history=False
-    ):
+    def __init__(self, z_val, model, store_history=False):
         self.z_val = z_val
         self.model = model
-        self.budget = budget
-        self.budget_window = (budget_window if budget_window is not None
-                              else 1000)
-        self.budget_counter = 0
         self.accuracy = 0
         self.hits = 0
         self.miss = 0
@@ -54,28 +47,11 @@ class ActiveLearner:
         probs = self.model.predict_proba(X)
         entropy_val = entropy(probs[0], base=2)
 
-        if self.budget is not None:
-            if (
-                    self.budget_counter <= self.budget
-                    and self.budget_counter < self.budget_window
-            ):
-                query = False
-                self.budget_counter += 1
-            elif self.budget_counter >= self.budget_window:
-                query = False
-                self.budget_counter = 0
-            else:
-                query = (
-                        entropy_val >= self.z_val
-                        or entropy_val == 0
-                        or math.isnan(entropy_val)
-                )
-        else:
-            query = (
-                    entropy_val >= self.z_val
-                    or entropy_val == 0
-                    or math.isnan(entropy_val)
-            )
+        query = (
+                entropy_val >= self.z_val
+                or entropy_val == 0
+                or math.isnan(entropy_val)
+        )
 
         hit = self.prequential_eval(X, y, target_values, query)
         if self.history is not None:

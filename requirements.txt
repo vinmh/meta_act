@@ -10,3 +10,4 @@ pytest
 pytest-timeout
 coverage-badge
 wheel
+PyYAML==6.*

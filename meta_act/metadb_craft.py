@@ -1,11 +1,9 @@
-import json
-import logging
 import math
 import shutil
 from collections import defaultdict
-from multiprocessing import Process, Queue
+from multiprocessing import Process, Queue, Value
 from pathlib import Path
-from typing import List
+from queue import Empty as QueueEmptyError
 
 import numpy as np
 import pandas as pd
@@ -15,8 +13,7 @@ from skmultiflow.trees import HoeffdingTreeClassifier
 
 from meta_act.act_learner import ActiveLearner
 from meta_act.ds_gen import DatasetGeneratorPackage
-from meta_act.windows import get_window_features
-from meta_act.windows import get_windows
+from meta_act.windows import get_window_features, drift_windows
 
 
 class WindowResults:
@@ -33,6 +30,10 @@ class WindowResults:
     @property
     def z_vals(self):
         return list(self._results.keys())
+
+    @property
+    def has_results(self):
+        return len(self.z_vals) > 0
 
     def get_results_table(self, summary_func=SUMMARY_LAST):
         if summary_func == self.SUMMARY_LAST:
@@ -101,144 +102,56 @@ class ZValGenerator:
         return ideal_z
 
 
-class WindowGenerator:
-    WINDOW_METADATA_FILENAME = "window_metadata.json"
-
+class StreamGenerator:
     def __init__(
             self,
             z_val_generator: ZValGenerator,
-            target_windows=200000,
-            pre_train_samples=300,
-            window_package_size=10,
-            drift_detector=None,
-            drift_detector_kwargs=None,
-            classifier=None,
-            classifier_kwargs=None,
-            cache_dir="./.window_cache",
-            use_stream_cache=True
+            generator_package: DatasetGeneratorPackage,
+            cache_dir="./.window_cache"
     ):
         self.z_val_generator = z_val_generator
-        self.pre_train_samples = pre_train_samples
-        self.target_samples = target_windows
-        self.package_size = window_package_size
-        if drift_detector is None:
-            self.drift_detector = ADWIN
-            self.drift_detector_kwargs = {"delta": 0.0001}
-        else:
-            self.drift_detector = drift_detector
-            if drift_detector_kwargs is None:
-                self.drift_detector_kwargs = {}
-            else:
-                self.drift_detector_kwargs = drift_detector_kwargs
-        if classifier is None:
-            self.classifier = HoeffdingTreeClassifier
-            self.classifier_kwargs = {}
-        else:
-            self.classifier = classifier
-            if classifier_kwargs is None:
-                self.classifier_kwargs = {}
-            else:
-                self.classifier_kwargs = classifier_kwargs
+        self.generator_package = generator_package
+        self.queue = Queue()
         self.cache_dir = Path(cache_dir)
-        self.use_stream_cache = use_stream_cache
         self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self.stop = Value('i', 0)
+        self.process = None
 
-    @property
-    def stream_cache_dir(self):
-        return self.cache_dir / "streams"
+    def reset_cache(self):
+        shutil.rmtree(self.cache_dir, ignore_errors=True)
 
-    @property
-    def window_cache_dir(self):
-        return self.cache_dir / "windows"
+    def provide_streams(self):
+        stream_n = 0
+        if not self.cache_dir.exists():
+            self.cache_dir.mkdir(parents=True)
+        existing_files = list(self.cache_dir.glob("*.npy"))
 
-    def _write_file(self, file_data, filename):
-        file_dict = {f"{n}": data for n, data in file_data}
-        np.savez(
-            (self.window_cache_dir / filename).as_posix(),
-            **file_dict
-        )
-
-    def get_stream(
-            self, generator_package: DatasetGeneratorPackage, reset_cache=False
-    ):
-        if reset_cache:
-            shutil.rmtree(self.stream_cache_dir)
-
-        if self.use_stream_cache:
-            if not self.stream_cache_dir.exists():
-                self.stream_cache_dir.mkdir(parents=True)
-            existing_files = list(self.stream_cache_dir.glob("*.npy"))
-        else:
-            existing_files = []
-
-        for cache_file in existing_files:
-            stream_data = np.load(cache_file)
-            yield stream_data, cache_file.name
-
-        logging.debug("-- Stream cache exhausted, generating new data --")
-
-        for stream_file, stream_name in generator_package.generate_datasets():
-            if self.use_stream_cache:
-                np.save(self.stream_cache_dir / stream_name, stream_file)
-            yield stream_file, stream_name + ".npy"
-
-    def generate_windows(
-            self, generator_package: DatasetGeneratorPackage,
-            reset_stream_cache=False
-    ):
-        shutil.rmtree(self.window_cache_dir, ignore_errors=True)
-        self.window_cache_dir.mkdir(parents=True)
-
-        windows_written = 0
-        files_list = []
-        stream_metadata = defaultdict(dict)
-        target_reached = False
-        for stream_file, stream_name in self.get_stream(
-                generator_package, reset_stream_cache
-        ):
-            drift_detector = self.drift_detector(
-                **self.drift_detector_kwargs
-            )
-            classifier = self.classifier(
-                **self.classifier_kwargs
-            )
-            windows = get_windows(stream_file,
-                                  self.pre_train_samples,
-                                  drift_detector,
-                                  classifier)
-            n_classes = np.unique(stream_file[:, -1].astype(int)).shape[0]
-            z_vals = self.z_val_generator.generate_z_vals(n_classes)
-            stream_metadata[stream_name]["z_vals"] = z_vals
-
-            file_count = 0
-            file_data = []
-            for window_n, window in enumerate(windows):
-                if windows_written >= self.target_samples:
-                    target_reached = True
-                    break
-
-                windows_written += 1
-                win_data = stream_file[window[0]: window[1]]
-                file_data.append([window_n, win_data])
-                if (len(file_data) >= self.package_size or
-                        windows_written >= self.target_samples):
-                    filename = (
-                        f"{file_count}__{len(file_data)}__{stream_name}.npz"
+        while self.stop.value == 0:
+            if self.queue.empty():
+                if stream_n < len(existing_files):
+                    s_data = np.load(existing_files[stream_n])
+                    s_name = existing_files[stream_n].name
+                else:
+                    s_data, s_name = self.generator_package.generate_dataset(
+                        stream_n
                     )
-                    self._write_file(file_data, filename)
-                    files_list.append(filename)
-                    file_count += 1
-                    file_data = []
+                    s_name = s_name + ".npy"
+                self.queue.put((s_data, s_name))
+                stream_n += 1
+        print("Stream generator stopped!")
 
-            if target_reached:
-                break
+    def start_generator(self):
+        print("Starting up Stream generator...")
+        self.process = Process(target=self.provide_streams)
+        self.process.start()
 
-        with open(
-                self.window_cache_dir / self.WINDOW_METADATA_FILENAME, "w"
-        ) as f:
-            json.dump(stream_metadata, f)
+    def signal_stop(self):
+        self.stop.value = 1
 
-        return files_list
+    def wait_generator_stop(self):
+        if self.stop:
+            self.process.join()
+            self.process = None
 
 
 class MetaDBCrafter:
@@ -246,20 +159,21 @@ class MetaDBCrafter:
     def __init__(
             self,
             z_val_generator: ZValGenerator,
-            window_cache_dir: Path,
             classifier=None,
             classifier_kwargs=None,
+            drift_detector=None,
+            drift_detector_kwargs=None,
+            wind_gen_grace_period=300,
             act_learner_grace_period=200,
             mfe_features=None,
             tsfel_config=None,
             feature_summaries=None,
             output_path=None,
-            thread_package_size=10,
             threads_number=4,
     ):
         self.z_val_generator = z_val_generator
-        self.window_cache_dir = window_cache_dir
         self.act_learner_grace_period = act_learner_grace_period
+        self.wind_gen_grace_period = wind_gen_grace_period
         self.mfe_features = mfe_features
         self.tsfel_config = tsfel_config
         if feature_summaries is None:
@@ -267,7 +181,6 @@ class MetaDBCrafter:
         else:
             self.feature_summaries = feature_summaries
         self.output_path = output_path
-        self.thread_packages = thread_package_size
         self.thread_n = threads_number
         if classifier is None:
             self.classifier = HoeffdingTreeClassifier
@@ -278,131 +191,120 @@ class MetaDBCrafter:
                 self.classifier_kwargs = {}
             else:
                 self.classifier_kwargs = classifier_kwargs
+        if drift_detector is None:
+            self.drift_detector = ADWIN
+            self.drift_detector_kwargs = {"delta": 0.0001}
+        else:
+            self.drift_detector = drift_detector
+            if drift_detector_kwargs is None:
+                self.drift_detector_kwargs = {}
+            else:
+                self.drift_detector_kwargs = drift_detector_kwargs
 
-    def _fetch_window_metadata(self):
-        metadata_file = (self.window_cache_dir /
-                         WindowGenerator.WINDOW_METADATA_FILENAME)
-        if not metadata_file.exists():
-            raise FileNotFoundError(
-                "Metadata file not found, re-generate windows"
-            )
-
-        with open(metadata_file) as f:
-            metadata = json.load(f)
-
-        return metadata
-
-    def _fetch_window_cache(self):
-        if not self.window_cache_dir.exists():
-            raise FileNotFoundError(
-                "Windows not found, please generate windows first"
-            )
-
-        metadata = self._fetch_window_metadata()
-
-        window_filelist = list(
-            x.name for x in self.window_cache_dir.glob("*.npz")
-        )
-        if len(window_filelist) == 0:
-            raise FileNotFoundError(
-                "No window files found, please generate windows"
-            )
-
-        return window_filelist, metadata
-
-    def parse_window_file(self, filename, metadata):
-        file_path = Path(self.window_cache_dir) / filename
-        if not file_path.exists():
-            raise FileNotFoundError(
-                f"Missing specified window file: {filename}"
-            )
-
-        window_n, window_qtd, stream_name = filename.rsplit(".", 1)[0].split(
-            "__"
-        )
-        window_file = np.load(file_path)
-        window_list = window_file.files
-        z_vals = metadata[stream_name]["z_vals"]
-
-        metadb_samples = []
-        for window_name in window_list:
-            window_data = window_file[window_name]
-            window_x = window_data[:, :-1]
-            window_y = window_data[:, -1].astype(int)
-
-            stream = DataStream(window_x, y=window_y)
-
-            wind_results = WindowResults()
-            for z_val in z_vals:
-                model = self.classifier(**self.classifier_kwargs)
-                learner = ActiveLearner(z_val, model)
-
-                pretrain_X, pretrain_y = stream.next_sample(
-                    self.act_learner_grace_period
+    def create_samples(
+            self, stream_generator: StreamGenerator, target: int
+    ):
+        samples = []
+        try:
+            while len(samples) < target:
+                stream_file, stream_name = stream_generator.queue.get(
+                    timeout=120
                 )
-                learner.prequential_eval(
-                    pretrain_X, pretrain_y, stream.target_values
+
+                n_classes = np.unique(stream_file[:, -1].astype(int)).shape[0]
+                z_vals = self.z_val_generator.generate_z_vals(n_classes)
+
+                stream_data = DataStream(
+                    stream_file[:, :-1], stream_file[:, -1].astype(int)
                 )
-                while stream.has_more_samples():
-                    X, y = stream.next_sample()
-                    hits, miss, acc, query, _ = learner.next_data(
-                        X, y, stream.target_values
-                    )
-                    wind_results.add_result(str(z_val), acc, query)
-                stream.restart()
+                drift_detector = self.drift_detector(
+                    **self.drift_detector_kwargs)
+                wind_classifier = self.classifier(**self.classifier_kwargs)
+                data_X = []
+                data_y = []
 
-            z, acc, queries = self.z_val_generator.get_best_z(wind_results)
+                for X, y, change in drift_windows(
+                        stream_data, drift_detector, wind_classifier,
+                        self.wind_gen_grace_period
+                ):
+                    data_X.append(X)
+                    data_y.append(y)
+                    if change:
+                        window_X = np.concatenate(data_X)
+                        window_y = np.concatenate(data_y)
+                        wind_results = WindowResults()
 
-            features = get_window_features(
-                window_x, self.mfe_features, self.tsfel_config,
-                self.feature_summaries
-            )
+                        pre_X = window_X[:self.act_learner_grace_period]
+                        pre_y = window_y[:self.act_learner_grace_period]
+                        rest_X = window_X[self.act_learner_grace_period:]
+                        rest_y = window_y[self.act_learner_grace_period:]
 
-            features["dataset_name"] = stream_name
-            features["actl_acc"] = acc
-            features["actl_queries"] = queries
-            features["window_batch"] = window_name
+                        for z in z_vals:
+                            act_model = self.classifier(
+                                **self.classifier_kwargs)
+                            learner = ActiveLearner(z, act_model)
 
-            features["Y"] = float(z)
+                            learner.prequential_eval(
+                                pre_X, pre_y, stream_data.target_values
+                            )
+                            for X, y in zip(rest_X, rest_y):
+                                hits, miss, acc, query, _ = learner.next_data(
+                                    np.array([X]), y, stream_data.target_values
+                                )
+                                wind_results.add_result(str(z), acc, query)
 
-            metadb_samples.append(features)
+                        if wind_results.has_results:
+                            best_z, acc, queries = \
+                                self.z_val_generator.get_best_z(
+                                    wind_results
+                                )
 
-        return pd.concat(metadb_samples).reset_index(drop=True)
+                            features = get_window_features(
+                                window_X, self.mfe_features, self.tsfel_config,
+                                self.feature_summaries
+                            )
 
-    def _creator_thread_func(self, file_list, metadata, queue):
-        metadb_sample_list = [
-            self.parse_window_file(filename, metadata)
-            for filename in file_list
-        ]
-        queue.put(metadb_sample_list)
+                            features["dataset_name"] = stream_name
+                            features["actl_acc"] = acc
+                            features["actl_queries"] = queries
 
-    def _partition_files_per_thread(self, file_list):
-        files_per_thread_n = len(file_list) // self.thread_n
-        files_per_thread = [
-            file_list[i:i + files_per_thread_n]
-            for i in range(0, len(file_list), files_per_thread_n)
-        ]
-        if len(files_per_thread) > 0:
-            for extra_i, extra in enumerate(files_per_thread[self.thread_n:]):
-                files_per_thread[extra_i % self.thread_n] += extra
+                            features["Y"] = float(best_z)
 
-        return files_per_thread[:self.thread_n]
+                            samples.append(features)
+
+                    if len(samples) >= target:
+                        break
+
+        except QueueEmptyError:
+            print("Stream Generator timeout...")
+        return pd.concat(samples).reset_index(drop=True)
+
+    def _creator_thread_func(self, stream_generator, target, queue):
+        samples = self.create_samples(stream_generator, target)
+        queue.put(samples)
+
+    def partition_target(self, target):
+        targets = [target // self.thread_n for _ in range(self.thread_n)]
+        for r in range(target % self.thread_n):
+            targets[r % len(targets)] += 1
+        return targets
 
     def create_metadb(
-            self, file_list: List[str]
+            self, stream_generator: StreamGenerator, target=2026
     ):
-        metadata = self._fetch_window_metadata()
 
-        files_per_thread = self._partition_files_per_thread(file_list)
+        target_per_thread = self.partition_target(target)
 
         results_queue = Queue()
         processes = [
             Process(
                 target=self._creator_thread_func,
-                args=(files, metadata, results_queue)
+                args=(stream_generator, target_t, results_queue)
             )
-            for files in files_per_thread
+            for target_t in target_per_thread
         ]
+
+        stream_generator.start_generator()
 
         for process in processes:
             process.start()
@@ -410,9 +312,11 @@ class MetaDBCrafter:
         for process in processes:
             process.join()
 
+        stream_generator.signal_stop()
+
         metadb_chunks = []
         while not results_queue.empty():
-            metadb_chunks += results_queue.get()
+            metadb_chunks.append(results_queue.get())
 
         full_metadb = pd.concat(metadb_chunks).reset_index(drop=True)
         if self.output_path is not None:

@@ -13,20 +13,21 @@ def test_active_learning_window_extraction():
     df = pd.read_csv(METADB_PATH)
     stream = DataStream(df)
 
-    learner = ActiveLearner(0.1, HoeffdingTreeClassifier(),
-                            store_history=True)
+    learner = ActiveLearner(
+        0.1, HoeffdingTreeClassifier(), store_history=True
+    )
 
     for i in range(1000):
         X, y = stream.next_sample()
         learner.next_data(X, y, stream.target_values)
 
-    wind1 = learner.get_last_window()
+    wind1 = learner.get_last_window(["mean"])
 
     for i in range(1000):
         X, y = stream.next_sample()
         learner.next_data(X, y, stream.target_values)
 
-    wind2 = learner.get_last_window(n_classes=5)
+    wind2 = learner.get_last_window(["mean"], n_classes=5)
 
     print(wind1)
     print(wind2)
